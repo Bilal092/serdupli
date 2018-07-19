@@ -3,9 +3,17 @@
 """
 Projects a matrix to the set of Robinson matrices
 """
+import sys
 import numpy as np
 from scipy.optimize import linprog
+import mosek
 from scipy.sparse import issparse, coo_matrix
+
+
+# Define a stream printer to grab output from MOSEK
+def streamprinter(text):
+    sys.stdout.write(text)
+    sys.stdout.flush()
 
 
 def proj2Rmat(X, do_strong=True, include_main_diag=True):
@@ -128,7 +136,7 @@ def proj2Rmat(X, do_strong=True, include_main_diag=True):
             b_ub = np.append(b_ub, np.zeros(diag_len))
 
     # Build the inequality matrix
-    A_ub = coo_matrix((avs, (ajs, ais))), dtype=int)
+    A_ub = coo_matrix((avs, (ajs, ais)), dtype=int).toarray()
     (n_cons, n_var) = A_ub.shape
     # Build the vector c for the linear program
     c = np.zeros(n_var)
@@ -139,13 +147,78 @@ def proj2Rmat(X, do_strong=True, include_main_diag=True):
     # Call the solver
     res = linprog(c, A_ub=A_ub, b_ub=b_ub, method=method,
                   options={"disp": True})
+
+    inf = 10 * xval.max()
+    # Make mosek environment
+    with mosek.Env() as env:
+        # Create a task object
+        with env.Task(0, 0) as task:
+            # Attach a log stream printer to the task
+            task.set_Stream(mosek.streamtype.log, streamprinter)
+            # Bound key for constraints
+            bkc = [mosek.boundkey.up] * n_cons
+            # Bound values for constraints
+            blc = [0] * n_cons
+            buc = list(b_ub)
+            # Bound keys for variables
+            bkx = [mosek.boundkey.lo] * n_var
+            # Bound values for Variables
+            blx = [0] * n_var
+            bux = [+inf] * n_var
+            # Vector c
+            c = list(c)
+
+            # Append 'numcon' empty constraints.
+            # The constraints will initially have no bounds.
+            task.appendcons(n_cons)
+
+            # Append 'numvar' variables.
+            # The variables will initially be fixed at zero (x=0).
+            task.appendvars(n_var)
+
+            # Build constraint matrix
+            task.putaijlist(ajs, ais, avs)
+            # Add variable bounds
+            task.putvarboundlist(list(range(n_var)), bkx, blx, bux)
+            # Add constraint bounds
+            task.putconboundlist(list(range(n_cons)), bkc, blc, buc)
+
+            # Input the objective sense (minimize/maximize)
+            task.putobjsense(mosek.objsense.minimize)
+            # Call solver
+            task.optimize()
+            # Print a summary containing information
+            # about the solution for debugging purposes
+            task.solutionsummary(mosek.streamtype.msg)
+
+            # Get status information about the solution
+            solsta = task.getsolsta(mosek.soltype.bas)
+
+            if (solsta == mosek.solsta.optimal or
+                    solsta == mosek.solsta.near_optimal):
+                xx = [0.] * n_var
+                task.getxx(mosek.soltype.bas,  # Request the basic solution.
+                           xx)
+                print("Optimal solution: ")
+                for i in range(n_var):
+                    print("x[" + str(i) + "]=" + str(xx[i]))
+            elif (solsta == mosek.solsta.dual_infeas_cer or
+                  solsta == mosek.solsta.prim_infeas_cer or
+                  solsta == mosek.solsta.near_dual_infeas_cer or
+                  solsta == mosek.solsta.near_prim_infeas_cer):
+                print("Primal or dual infeasibility certificate found.\n")
+            elif solsta == mosek.solsta.unknown:
+                print("Unknown solution status")
+            else:
+                print("Other solution status")
+
     return res
 
 
 if __name__ == 'main':
     from mdso import SimilarityMatrix
 
-    n = 500
+    n = 100
     type_noise = 'gaussian'
     ampl_noise = 0.5
     type_similarity = 'LinearStrongDecrease'
