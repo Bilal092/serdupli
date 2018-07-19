@@ -42,9 +42,9 @@ def proj2Rmat(X, do_strong=True, include_main_diag=True):
     (i_tril, j_tril) = np.tril_indices(n, k=k, m=n)
     ind_tril = np.ravel_multi_index((i_tril, j_tril), (n, n))
     xval = X.flatten()[ind_tril]
-    ais = []
-    ajs = []
-    avs = []
+    ais = np.zeros(0, dtype=int)
+    ajs = np.zeros(0, dtype=int)
+    avs = np.zeros(0, dtype=int)
     b_ub = np.zeros(0)
     # Add absolute-value related inequalities to A_ub
     # First direction of absolute value
@@ -52,14 +52,14 @@ def proj2Rmat(X, do_strong=True, include_main_diag=True):
 
     i_idx = np.arange(n_tri)
     sign_ = -np.ones(n_tri, dtype=int)
-    ais.append(i_idx)
-    ajs.append(ineq_idx)
-    avs.append(sign_)
+    ais = np.append(ais, i_idx)
+    ajs = np.append(ajs, ineq_idx)
+    avs = np.append(avs, sign_)
 
     i_idx = np.arange(n_tri, 2 * n_tri)
-    ais.append(i_idx)
-    ajs.append(ineq_idx)
-    avs.append(sign_)
+    ais = np.append(ais, i_idx)
+    ajs = np.append(ajs, ineq_idx)
+    avs = np.append(avs, sign_)
 
     b_ub = np.append(b_ub, -xval)
 
@@ -68,15 +68,15 @@ def proj2Rmat(X, do_strong=True, include_main_diag=True):
 
     i_idx = np.arange(n_tri)
     sign_ = np.ones(n_tri, dtype=int)
-    ais.append(i_idx)
-    ajs.append(ineq_idx)
-    avs.append(sign_)
+    ais = np.append(ais, i_idx)
+    ajs = np.append(ajs, ineq_idx)
+    avs = np.append(avs, sign_)
 
     i_idx = np.arange(n_tri, 2 * n_tri)
     sign_ *= -1
-    ais.append(i_idx)
-    ajs.append(ineq_idx)
-    avs.append(sign_)
+    ais = np.append(ais, i_idx)
+    ajs = np.append(ajs, ineq_idx)
+    avs = np.append(avs, sign_)
 
     b_ub = np.append(b_ub, xval)
 
@@ -84,8 +84,12 @@ def proj2Rmat(X, do_strong=True, include_main_diag=True):
     first_diag = 0 if include_main_diag else 1
     (i_diag_sub, j_diag_sub) = np.diag_indices(n)
     for k_diag in range(first_diag, n):
-        these_i = i_diag_sub[k_diag:]
-        these_j = j_diag_sub[:-k_diag]
+        if k_diag > 0:
+            these_i = i_diag_sub[k_diag:]
+            these_j = j_diag_sub[:-k_diag]
+        else:
+            these_i = i_diag_sub[:]
+            these_j = j_diag_sub[:]
         these_ind = np.ravel_multi_index((these_i, these_j), (n, n))
         alpha_idx = 2 * n_tri + k_diag - first_diag
         diag_len = len(these_ind)
@@ -96,13 +100,13 @@ def proj2Rmat(X, do_strong=True, include_main_diag=True):
 
             i_idx = [alpha_idx - 1] * diag_len  # might be a type issue
             sign_ = np.ones(diag_len)
-            ais.append(i_idx)
-            ajs.append(ineq_idx)
-            avs.append(sign_)
+            ais = np.append(ais, i_idx)
+            ajs = np.append(ajs, ineq_idx)
+            avs = np.append(avs, sign_)
 
-            ais.append(these_ind)
-            ajs.append(ineq_idx)
-            avs.append(-sign_)
+            ais = np.append(ais, these_ind)
+            ajs = np.append(ajs, ineq_idx)
+            avs = np.append(avs, -sign_)
 
             b_ub = np.append(b_ub, np.zeros(diag_len))
 
@@ -113,16 +117,42 @@ def proj2Rmat(X, do_strong=True, include_main_diag=True):
 
             i_idx = [alpha_idx] * diag_len  # might be a type issue
             sign_ = -np.ones(diag_len)
-            ais.append(i_idx)
-            ajs.append(ineq_idx)
-            avs.append(sign_)
+            ais = np.append(ais, i_idx)
+            ajs = np.append(ajs, ineq_idx)
+            avs = np.append(avs, sign_)
 
-            ais.append(these_ind)
-            ajs.append(ineq_idx)
-            avs.append(-sign_)
+            ais = np.append(ais, these_ind)
+            ajs = np.append(ajs, ineq_idx)
+            avs = np.append(avs, -sign_)
 
             b_ub = np.append(b_ub, np.zeros(diag_len))
 
     # Build the inequality matrix
-    A_ub = coo_matrix((avs, (ais, ajs)), dtype=int)
-    c = 
+    A_ub = coo_matrix((avs, (ajs, ais))), dtype=int)
+    (n_cons, n_var) = A_ub.shape
+    # Build the vector c for the linear program
+    c = np.zeros(n_var)
+    c[n_tri:2*n_tri] = 1
+    # Add non-negativity constraints ? (implemented by default)
+
+    method = 'simplex'
+    # Call the solver
+    res = linprog(c, A_ub=A_ub, b_ub=b_ub, method=method,
+                  options={"disp": True})
+    return res
+
+
+if __name__ == 'main':
+    from mdso import SimilarityMatrix
+
+    n = 500
+    type_noise = 'gaussian'
+    ampl_noise = 0.5
+    type_similarity = 'LinearStrongDecrease'
+    apply_perm = False
+    # Build data matrix
+    data_gen = SimilarityMatrix()
+    data_gen.gen_matrix(n, type_matrix=type_similarity, apply_perm=apply_perm,
+                        noise_ampl=ampl_noise, law=type_noise)
+    mat = data_gen.sim_matrix
+    res = proj2Rmat(mat)
