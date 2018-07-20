@@ -16,7 +16,7 @@ def streamprinter(text):
     sys.stdout.flush()
 
 
-def proj2Rmat(X, do_strong=True, include_main_diag=True):
+def proj2Rmat(X, do_strong=True, include_main_diag=True, verbose=0):
     """
     Projects a matrix to the set of Robinson matrices.
     Performs \min_{A} \sum_{ij} |A_{ij} - X_{ij}| such that A is Robinson,
@@ -49,6 +49,10 @@ def proj2Rmat(X, do_strong=True, include_main_diag=True):
         k = -1
     (i_tril, j_tril) = np.tril_indices(n, k=k, m=n)
     ind_tril = np.ravel_multi_index((i_tril, j_tril), (n, n))
+    # Find ``inverse'' of ind_tril
+    tril_argsort = np.argsort(ind_tril)
+    tril_map = np.zeros(n**2, dtype=int)
+    tril_map[ind_tril] = tril_argsort
     xval = X.flatten()[ind_tril]
     ais = np.zeros(0, dtype=int)
     ajs = np.zeros(0, dtype=int)
@@ -98,7 +102,9 @@ def proj2Rmat(X, do_strong=True, include_main_diag=True):
         else:
             these_i = i_diag_sub[:]
             these_j = j_diag_sub[:]
+        assert(np.all(these_i >= these_j))
         these_ind = np.ravel_multi_index((these_i, these_j), (n, n))
+        these_ind = tril_map[these_ind]
         alpha_idx = 2 * n_tri + k_diag - first_diag
         diag_len = len(these_ind)
         if k_diag > first_diag:
@@ -107,7 +113,8 @@ def proj2Rmat(X, do_strong=True, include_main_diag=True):
             ineq_idx = np.arange(next_ineq_idx, next_ineq_idx + diag_len)
 
             i_idx = [alpha_idx - 1] * diag_len  # might be a type issue
-            sign_ = np.ones(diag_len)
+            i_idx = np.array(i_idx)
+            sign_ = -np.ones(diag_len, dtype=int)
             ais = np.append(ais, i_idx)
             ajs = np.append(ajs, ineq_idx)
             avs = np.append(avs, sign_)
@@ -124,7 +131,8 @@ def proj2Rmat(X, do_strong=True, include_main_diag=True):
             ineq_idx = np.arange(next_ineq_idx, next_ineq_idx + diag_len)
 
             i_idx = [alpha_idx] * diag_len  # might be a type issue
-            sign_ = -np.ones(diag_len)
+            i_idx = np.array(i_idx)
+            sign_ = np.ones(diag_len)
             ais = np.append(ais, i_idx)
             ajs = np.append(ajs, ineq_idx)
             avs = np.append(avs, sign_)
@@ -136,34 +144,35 @@ def proj2Rmat(X, do_strong=True, include_main_diag=True):
             b_ub = np.append(b_ub, np.zeros(diag_len))
 
     # Build the inequality matrix
-    A_ub = coo_matrix((avs, (ajs, ais)), dtype=int).toarray()
+    A_ub = coo_matrix((avs, (ajs, ais)), dtype=int)
     (n_cons, n_var) = A_ub.shape
     # Build the vector c for the linear program
     c = np.zeros(n_var)
     c[n_tri:2*n_tri] = 1
     # Add non-negativity constraints ? (implemented by default)
+    #
+    # method = 'simplex'
+    # # Call the solver
+    # res = linprog(c, A_ub=A_ub, b_ub=b_ub, method=method,
+    #               options={"disp": True})
 
-    method = 'simplex'
-    # Call the solver
-    res = linprog(c, A_ub=A_ub, b_ub=b_ub, method=method,
-                  options={"disp": True})
-
-    inf = 10 * xval.max()
+    inf = 10 * max(xval.max(), -xval.min())
     # Make mosek environment
     with mosek.Env() as env:
         # Create a task object
         with env.Task(0, 0) as task:
-            # Attach a log stream printer to the task
-            task.set_Stream(mosek.streamtype.log, streamprinter)
+            if verbose > 0:
+                # Attach a log stream printer to the task
+                task.set_Stream(mosek.streamtype.log, streamprinter)
             # Bound key for constraints
             bkc = [mosek.boundkey.up] * n_cons
             # Bound values for constraints
             blc = [0] * n_cons
             buc = list(b_ub)
             # Bound keys for variables
-            bkx = [mosek.boundkey.lo] * n_var
+            bkx = [mosek.boundkey.fr] * n_var
             # Bound values for Variables
-            blx = [0] * n_var
+            blx = [-inf] * n_var
             bux = [+inf] * n_var
             # Vector c
             c = list(c)
@@ -178,6 +187,8 @@ def proj2Rmat(X, do_strong=True, include_main_diag=True):
 
             # Build constraint matrix
             task.putaijlist(ajs, ais, avs)
+            # Add linear coeff
+            task.putclist(list(range(n_var)), c)
             # Add variable bounds
             task.putvarboundlist(list(range(n_var)), bkx, blx, bux)
             # Add constraint bounds
@@ -199,9 +210,6 @@ def proj2Rmat(X, do_strong=True, include_main_diag=True):
                 xx = [0.] * n_var
                 task.getxx(mosek.soltype.bas,  # Request the basic solution.
                            xx)
-                print("Optimal solution: ")
-                for i in range(n_var):
-                    print("x[" + str(i) + "]=" + str(xx[i]))
             elif (solsta == mosek.solsta.dual_infeas_cer or
                   solsta == mosek.solsta.prim_infeas_cer or
                   solsta == mosek.solsta.near_dual_infeas_cer or
@@ -212,13 +220,24 @@ def proj2Rmat(X, do_strong=True, include_main_diag=True):
             else:
                 print("Other solution status")
 
-    return res
+    # xnewval = xx[:n_tri]
+    xnew = np.zeros(n**2)
+    xnew[ind_tril] = xx[:n_tri]
+    X_proj = np.reshape(xnew, (n, n))
+    if not include_main_diag:
+        X_proj += X_proj.T
+    else:
+        X_proj += np.tril(X_proj, k=-1).T
+
+    return X_proj
 
 
 if __name__ == 'main':
+
+    import matplotlib.pyplot as plt
     from mdso import SimilarityMatrix
 
-    n = 100
+    n = 200
     type_noise = 'gaussian'
     ampl_noise = 0.5
     type_similarity = 'LinearStrongDecrease'
@@ -228,4 +247,8 @@ if __name__ == 'main':
     data_gen.gen_matrix(n, type_matrix=type_similarity, apply_perm=apply_perm,
                         noise_ampl=ampl_noise, law=type_noise)
     mat = data_gen.sim_matrix
-    res = proj2Rmat(mat)
+    X = mat.copy()
+    include_main_diag = True
+    X_proj = proj2Rmat(mat)
+    plt.matshow(X_proj)
+    plt.show()
