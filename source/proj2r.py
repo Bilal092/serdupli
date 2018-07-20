@@ -5,15 +5,150 @@ Projects a matrix to the set of Robinson matrices
 """
 import sys
 import numpy as np
-from scipy.optimize import linprog
+# from scipy.optimize import linprog
 import mosek
-from scipy.sparse import issparse, coo_matrix
+from scipy.sparse import coo_matrix
 
 
 # Define a stream printer to grab output from MOSEK
 def streamprinter(text):
     sys.stdout.write(text)
     sys.stdout.flush()
+
+
+def add_R_cons(ais, ajs, avs, b_ub, n, include_main_diag):
+    """
+    Generate (weak) R constraints before calling LP solver
+    """
+    if include_main_diag:
+        k = 0
+    else:
+        k = -1
+    (i_tril, j_tril) = np.tril_indices(n, k=k, m=n)
+    ind_tril = np.ravel_multi_index((i_tril, j_tril), (n, n))
+    # Find ``inverse'' of ind_tril
+    tril_argsort = np.argsort(ind_tril)
+    tril_map = np.zeros(n**2, dtype=int)
+    tril_map[ind_tril] = tril_argsort
+    # Add R-constraints related inequalities to A_ub
+    first_diag = 0 if include_main_diag else 1
+    (i_diag_sub, j_diag_sub) = np.diag_indices(n)
+    for k_diag in range(first_diag, n-1):
+        if k_diag > 0:
+            these_i = i_diag_sub[k_diag:]
+            these_j = j_diag_sub[:-k_diag]
+        else:
+            these_i = i_diag_sub[:]
+            these_j = j_diag_sub[:]
+        next_i = i_diag_sub[k_diag+1:]
+        next_j = j_diag_sub[:-(k_diag+1)]
+        these_ind = np.ravel_multi_index((these_i, these_j), (n, n))
+        these_ind = tril_map[these_ind]
+        next_ind = np.ravel_multi_index((next_i, next_j), (n, n))
+        next_ind = tril_map[next_ind]
+        diag_len = len(next_ind)
+
+        # Elements in current diag larger than the one just below
+        next_ineq_idx = ajs[-1] + 1
+        ineq_idx = np.arange(next_ineq_idx, next_ineq_idx + diag_len)
+
+        sign_ = -np.ones(diag_len, dtype=int)
+        ais = np.append(ais, these_ind[:-1])
+        ajs = np.append(ajs, ineq_idx)
+        avs = np.append(avs, sign_)
+
+        ais = np.append(ais, next_ind)
+        ajs = np.append(ajs, ineq_idx)
+        avs = np.append(avs, -sign_)
+
+        b_ub = np.append(b_ub, np.zeros(diag_len))
+
+        # Elements in current diag larger than the one just on the left
+        next_ineq_idx = ajs[-1] + 1
+        ineq_idx = np.arange(next_ineq_idx, next_ineq_idx + diag_len)
+
+        sign_ = -np.ones(diag_len, dtype=int)
+        ais = np.append(ais, these_ind[1:])
+        ajs = np.append(ajs, ineq_idx)
+        avs = np.append(avs, sign_)
+
+        ais = np.append(ais, next_ind)
+        ajs = np.append(ajs, ineq_idx)
+        avs = np.append(avs, -sign_)
+
+        b_ub = np.append(b_ub, np.zeros(diag_len))
+
+    return(ais, ajs, avs, b_ub)
+
+
+def add_strong_R_cons(ais, ajs, avs, b_ub, n, include_main_diag):
+    """
+    Generate strong R constraints before calling LP solver
+    """
+    if include_main_diag:
+        n_tri = n * (n+1) // 2
+        k = 0
+    else:
+        n_tri = n * (n-1) // 2
+        k = -1
+    (i_tril, j_tril) = np.tril_indices(n, k=k, m=n)
+    ind_tril = np.ravel_multi_index((i_tril, j_tril), (n, n))
+    # Find ``inverse'' of ind_tril
+    tril_argsort = np.argsort(ind_tril)
+    tril_map = np.zeros(n**2, dtype=int)
+    tril_map[ind_tril] = tril_argsort
+    # Add R-constraints related inequalities to A_ub
+    first_diag = 0 if include_main_diag else 1
+    (i_diag_sub, j_diag_sub) = np.diag_indices(n)
+    for k_diag in range(first_diag, n):
+        if k_diag > 0:
+            these_i = i_diag_sub[k_diag:]
+            these_j = j_diag_sub[:-k_diag]
+        else:
+            these_i = i_diag_sub[:]
+            these_j = j_diag_sub[:]
+        assert(np.all(these_i >= these_j))
+        these_ind = np.ravel_multi_index((these_i, these_j), (n, n))
+        these_ind = tril_map[these_ind]
+        diag_len = len(these_ind)
+        alpha_idx = 2 * n_tri + k_diag - first_diag
+        if k_diag > first_diag:
+            # Diagonal entries lower than slack variable just above
+            next_ineq_idx = ajs[-1] + 1
+            ineq_idx = np.arange(next_ineq_idx, next_ineq_idx + diag_len)
+
+            i_idx = [alpha_idx - 1] * diag_len  # might be a type issue
+            i_idx = np.array(i_idx)
+            sign_ = -np.ones(diag_len, dtype=int)
+            ais = np.append(ais, i_idx)
+            ajs = np.append(ajs, ineq_idx)
+            avs = np.append(avs, sign_)
+
+            ais = np.append(ais, these_ind)
+            ajs = np.append(ajs, ineq_idx)
+            avs = np.append(avs, -sign_)
+
+            b_ub = np.append(b_ub, np.zeros(diag_len))
+
+        if k_diag < n-1:
+            # Diagonal entries larger than slack variable just below
+            next_ineq_idx = ajs[-1] + 1
+            ineq_idx = np.arange(next_ineq_idx, next_ineq_idx + diag_len)
+
+            i_idx = [alpha_idx] * diag_len  # might be a type issue
+            i_idx = np.array(i_idx)
+            sign_ = np.ones(diag_len)
+            ais = np.append(ais, i_idx)
+            ajs = np.append(ajs, ineq_idx)
+            avs = np.append(avs, sign_)
+
+            ais = np.append(ais, these_ind)
+            ajs = np.append(ajs, ineq_idx)
+            avs = np.append(avs, -sign_)
+
+            b_ub = np.append(b_ub, np.zeros(diag_len))
+
+    return(ais, ajs, avs, b_ub)
 
 
 def proj2Rmat(X, do_strong=True, include_main_diag=True, verbose=0):
@@ -49,10 +184,10 @@ def proj2Rmat(X, do_strong=True, include_main_diag=True, verbose=0):
         k = -1
     (i_tril, j_tril) = np.tril_indices(n, k=k, m=n)
     ind_tril = np.ravel_multi_index((i_tril, j_tril), (n, n))
-    # Find ``inverse'' of ind_tril
-    tril_argsort = np.argsort(ind_tril)
-    tril_map = np.zeros(n**2, dtype=int)
-    tril_map[ind_tril] = tril_argsort
+    # # Find ``inverse'' of ind_tril
+    # tril_argsort = np.argsort(ind_tril)
+    # tril_map = np.zeros(n**2, dtype=int)
+    # tril_map[ind_tril] = tril_argsort
     xval = X.flatten()[ind_tril]
     ais = np.zeros(0, dtype=int)
     ajs = np.zeros(0, dtype=int)
@@ -93,59 +228,17 @@ def proj2Rmat(X, do_strong=True, include_main_diag=True, verbose=0):
     b_ub = np.append(b_ub, xval)
 
     # Add R-constraints related inequalities to A_ub
-    first_diag = 0 if include_main_diag else 1
-    (i_diag_sub, j_diag_sub) = np.diag_indices(n)
-    for k_diag in range(first_diag, n):
-        if k_diag > 0:
-            these_i = i_diag_sub[k_diag:]
-            these_j = j_diag_sub[:-k_diag]
-        else:
-            these_i = i_diag_sub[:]
-            these_j = j_diag_sub[:]
-        assert(np.all(these_i >= these_j))
-        these_ind = np.ravel_multi_index((these_i, these_j), (n, n))
-        these_ind = tril_map[these_ind]
-        alpha_idx = 2 * n_tri + k_diag - first_diag
-        diag_len = len(these_ind)
-        if k_diag > first_diag:
-            # Diagonal entries lower than slack variable just above
-            next_ineq_idx = ajs[-1] + 1
-            ineq_idx = np.arange(next_ineq_idx, next_ineq_idx + diag_len)
-
-            i_idx = [alpha_idx - 1] * diag_len  # might be a type issue
-            i_idx = np.array(i_idx)
-            sign_ = -np.ones(diag_len, dtype=int)
-            ais = np.append(ais, i_idx)
-            ajs = np.append(ajs, ineq_idx)
-            avs = np.append(avs, sign_)
-
-            ais = np.append(ais, these_ind)
-            ajs = np.append(ajs, ineq_idx)
-            avs = np.append(avs, -sign_)
-
-            b_ub = np.append(b_ub, np.zeros(diag_len))
-
-        if k_diag < n-1:
-            # Diagonal entries larger than slack variable just below
-            next_ineq_idx = ajs[-1] + 1
-            ineq_idx = np.arange(next_ineq_idx, next_ineq_idx + diag_len)
-
-            i_idx = [alpha_idx] * diag_len  # might be a type issue
-            i_idx = np.array(i_idx)
-            sign_ = np.ones(diag_len)
-            ais = np.append(ais, i_idx)
-            ajs = np.append(ajs, ineq_idx)
-            avs = np.append(avs, sign_)
-
-            ais = np.append(ais, these_ind)
-            ajs = np.append(ajs, ineq_idx)
-            avs = np.append(avs, -sign_)
-
-            b_ub = np.append(b_ub, np.zeros(diag_len))
+    if do_strong:
+        (ais, ajs, avs, b_ub) = add_strong_R_cons(ais, ajs, avs, b_ub, n,
+                                                  include_main_diag)
+    else:
+        (ais, ajs, avs, b_ub) = add_R_cons(ais, ajs, avs, b_ub, n,
+                                           include_main_diag)
 
     # Build the inequality matrix
     A_ub = coo_matrix((avs, (ajs, ais)), dtype=int)
     (n_cons, n_var) = A_ub.shape
+
     # Build the vector c for the linear program
     c = np.zeros(n_var)
     c[n_tri:2*n_tri] = 1
@@ -237,7 +330,7 @@ if __name__ == 'main':
     import matplotlib.pyplot as plt
     from mdso import SimilarityMatrix
 
-    n = 200
+    n = 250
     type_noise = 'gaussian'
     ampl_noise = 0.5
     type_similarity = 'LinearStrongDecrease'
@@ -249,6 +342,10 @@ if __name__ == 'main':
     mat = data_gen.sim_matrix
     X = mat.copy()
     include_main_diag = True
-    X_proj = proj2Rmat(mat)
+    do_strong = False
+    verbose = 0
+    X_proj = proj2Rmat(mat, do_strong=do_strong,
+                       include_main_diag=include_main_diag,
+                       verbose=verbose)
     plt.matshow(X_proj)
     plt.show()
