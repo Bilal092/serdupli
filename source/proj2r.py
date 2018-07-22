@@ -151,7 +151,8 @@ def add_strong_R_cons(ais, ajs, avs, b_ub, n, include_main_diag):
     return(ais, ajs, avs, b_ub)
 
 
-def proj2Rmat(X, do_strong=True, include_main_diag=True, verbose=0):
+def proj2Rmat(X, do_strong=True, include_main_diag=True, verbose=0,
+              u_b=None):
     """
     Projects a matrix to the set of Robinson matrices.
     Performs \min_{A} \sum_{ij} |A_{ij} - X_{ij}| such that A is Robinson,
@@ -249,7 +250,10 @@ def proj2Rmat(X, do_strong=True, include_main_diag=True, verbose=0):
     # res = linprog(c, A_ub=A_ub, b_ub=b_ub, method=method,
     #               options={"disp": True})
 
-    inf = 10 * max(xval.max(), -xval.min())
+    if u_b is None:
+        inf = 10 * max(xval.max(), -xval.min())
+    else:
+        inf = u_b
     # Make mosek environment
     with mosek.Env() as env:
         # Create a task object
@@ -263,9 +267,9 @@ def proj2Rmat(X, do_strong=True, include_main_diag=True, verbose=0):
             blc = [0] * n_cons
             buc = list(b_ub)
             # Bound keys for variables
-            bkx = [mosek.boundkey.fr] * n_var
+            bkx = [mosek.boundkey.ra] * n_var
             # Bound values for Variables
-            blx = [-inf] * n_var
+            blx = [0] * n_var
             bux = [+inf] * n_var
             # Vector c
             c = list(c)
