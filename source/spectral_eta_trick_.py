@@ -151,7 +151,7 @@ def spectral_eta_trick(X, n_iter=50, dh=1, p=1, return_score=False,
 
 class SpectralEtaTrick():
 
-    def __init__(self, n_iter=10, dh=1, return_score=False):
+    def __init__(self, n_iter=20, dh=1, return_score=False):
         self.n_iter = n_iter
         self.dh = dh
         self.return_score = return_score
