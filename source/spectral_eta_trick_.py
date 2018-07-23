@@ -73,7 +73,8 @@ def plot_mat(X, title='', permut=None):
     return
 
 
-def spectral_eta_trick(X, n_iter=50, dh=1, p=1, return_score=False, do_plot=False):
+def spectral_eta_trick(X, n_iter=50, dh=1, p=1, return_score=False,
+                       do_plot=False):
     """
     Performs Spectral Eta-trick Algorithm from
     https://arxiv.org/pdf/1806.00664.pdf
@@ -146,3 +147,24 @@ def spectral_eta_trick(X, n_iter=50, dh=1, p=1, return_score=False, do_plot=Fals
         return(best_perm, best_score)
     else:
         return(best_perm)
+
+
+class SpectralEtaTrick():
+
+    def __init__(self, n_iter=10, dh=1, return_score=False):
+        self.n_iter = n_iter
+        self.dh = dh
+        self.return_score = return_score
+
+    def fit(self, X):
+
+        ordering_ = spectral_eta_trick(X, n_iter=self.n_iter, dh=self.dh,
+                                       return_score=self.return_score)
+        self.ordering = ordering_
+
+        return self
+
+    def fit_transform(self, X):
+
+        self.fit(X)
+        return self.ordering
