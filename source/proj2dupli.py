@@ -121,6 +121,7 @@ def proj2dupli(S, Z, A, u_b=None, k_sparse=None, include_main_diag=True):
             s_vec = s_flat[these_ind]
             # Perform the projection for subscript pair (i,j)
             sparse_param = len(these_ind)
+            sparse_param = np.count_nonzero(s_vec)
             s_new[these_ind] = one_proj_sparse(s_vec,
                                                svs[k], u_b=u_b,
                                                k_sparse=sparse_param)
