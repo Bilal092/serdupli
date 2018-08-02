@@ -3,3 +3,8 @@
 
 # Compiled python modules.
 *.pyc
+
+# DNA data files
+/examples/e_coli/ecoli_data/
+/examples/e_coli/software/
+/examples/e_coli/results/
