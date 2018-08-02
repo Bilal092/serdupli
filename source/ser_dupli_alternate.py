@@ -10,11 +10,11 @@ import matplotlib.pyplot as plt
 from sklearn.cluster import SpectralClustering
 from mdso import SpectralOrdering, SpectralBaseline
 
-from proj2r import proj2Rmat
-from proj2dupli import proj2dupli
-from spectral_eta_trick_ import SpectralEtaTrick
+from source.proj2r import proj2Rmat
+from source.proj2dupli import proj2dupli
+from source.spectral_eta_trick_ import SpectralEtaTrick
 
-from eval_dupli import eval_assignments
+from source.eval_dupli import eval_assignments
 
 
 def visualize_mat(S_t, S_tp, R_t, Z, perm, title, Z_true=None, fig_nb=1):
@@ -33,9 +33,11 @@ def visualize_mat(S_t, S_tp, R_t, Z, perm, title, Z_true=None, fig_nb=1):
     plt.close()
     fig, axes = plt.subplots(2, 2)
     cax = axes[0, 0].matshow(S_t)
-    fig.colorbar(cax)
-    axes[0, 1].matshow(R_t)
-    axes[1, 0].matshow(S_tp)
+    fig.colorbar(cax, ax=axes[0, 0])
+    cax2 = axes[0, 1].matshow(R_t)
+    fig.colorbar(cax2, ax=axes[0, 1])
+    cax3 = axes[1, 0].matshow(S_tp)
+    fig.colorbar(cax3, ax=axes[1, 0])
     (iiz, jjz, _) = find(Z)
     axes[1, 1].scatter(iiz, jjz, marker='.', s=4)
     # axes[1, 0].spy(Z)
@@ -85,7 +87,8 @@ def ser_dupli_alt(A, C, seriation_solver='eta-trick', n_iter=100,
     # Iterate
     for it in range(n_iter):
         # S_old
-        S_t -= S_t.min()  # to make sure it is non-negative after linprog
+        # S_t -= S_t.min()  # to make sure it is non-negative after linprog
+        # print(S_t.min())
         permu = my_solver.fit_transform(S_t)
 
         is_identity = (np.all(permu == np.arange(N)) or
@@ -100,6 +103,8 @@ def ser_dupli_alt(A, C, seriation_solver='eta-trick', n_iter=100,
         R_t = proj2Rmat(S_tp, do_strong=do_strong,
                         include_main_diag=include_main_diag, verbose=0,
                         u_b=max_val)
+        print(R_t.min())
+        R_t -= R_t.min()
 
         Z = Z[:, permu]
 
@@ -150,13 +155,14 @@ def ser_dupli_alt_clust(A, C, seriation_solver='eta-trick', n_iter=100,
     S_t = Z.T @ dc @ A @ dc @ Z
 
     max_val = A.max()
+    max_val = S_t.max()
 
     perm_tot = np.arange(N)
 
     # Iterate
     for it in range(n_iter):
         # S_old
-        S_t -= S_t.min()  # to make sure it is non-negative after linprog
+        # S_t -= S_t.min()  # to make sure it is non-negative after linprog
 
         # Cluster the similarity matrix
         labels_ = cluster_solver.fit_predict(S_t.max() - S_t)
@@ -178,17 +184,17 @@ def ser_dupli_alt_clust(A, C, seriation_solver='eta-trick', n_iter=100,
             # permu[in_clst] = in_clst[inv_sub_perm]
             permu = np.append(permu, sub_cc)
 
-            # (iis, jjs) = np.meshgrid(in_clst, in_clst)
-            # iis = iis.flatten()
-            # jjs = jjs.flatten()
-            # sub_idx = np.ravel_multi_index((iis, jjs), (N, N))
+            (iis, jjs) = np.meshgrid(in_clst, in_clst)
+            iis = iis.flatten()
+            jjs = jjs.flatten()
+            sub_idx = np.ravel_multi_index((iis, jjs), (N, N))
             #
             # (iord, jord) = np.meshgrid(sub_cc, sub_cc)
             # iord = iord.flatten()
             # jord = jord.flatten()
             # sub_ord = np.ravel_multi_index((iord, jord), (N, N))
             #
-            # s_clus[sub_idx] = s_flat[sub_ord]
+            s_clus[sub_idx] = s_flat[sub_idx]
             # S_clus[in_clst, :][:, in_clst] += sub_mat
 
         is_identity = (np.all(permu == np.arange(N)) or
@@ -196,10 +202,12 @@ def ser_dupli_alt_clust(A, C, seriation_solver='eta-trick', n_iter=100,
         # if is_identity:
         #     break
 
-        S_tp = S_t.copy()[permu, :]
-        S_tp = S_tp.T[permu, :].T
+        alpha_ = 0.1
+        S_clus = (1 - alpha_) * np.reshape(s_clus, (N, N)) + alpha_ * S_t
         # S_clus = np.reshape(s_clus, (N, N))
-        # S_tp = S_clus
+        S_tp = S_clus[permu, :]
+        # S_tp = S_t.copy()[permu, :]
+        S_tp = S_tp.T[permu, :].T
         # S_tp = S_tp.T[permu, :].T
 
         R_t = proj2Rmat(S_tp, do_strong=do_strong,
@@ -231,7 +239,7 @@ if __name__ == 'main':
     import matplotlib.pyplot as plt
     from scipy.linalg import toeplitz
 
-    from gen_data import gen_dupl_mat
+    from source.gen_data import gen_dupl_mat
 
     n = 150
     type_noise = 'gaussian'
@@ -243,6 +251,9 @@ if __name__ == 'main':
     data_gen.gen_matrix(n, type_matrix=type_similarity, apply_perm=apply_perm,
                         noise_ampl=ampl_noise, law=type_noise)
     S = data_gen.sim_matrix
+
+    # S = gen_chr_mat(n, 3, type_mat=S)
+    S = S + 1 * gen_chr_mat(n, 3)
     #
     # n = 200
     # my_diag = np.zeros(n)
@@ -267,7 +278,7 @@ if __name__ == 'main':
                         n_clusters=2, do_strong=False, include_main_diag=True,
                         do_show=True, Z_true=Z_true)
 
-    import scipy.io
-    scipy.io.savemat(
-        '/Users/antlaplante/THESE/SeriationDuplications/data/pythonvars.mat',
-        mdict={'Z': Z_true, 'A': A, 'S': S, 'C': C})
+    # import scipy.io
+    # scipy.io.savemat(
+    #     '/Users/antlaplante/THESE/SeriationDuplications/data/pythonvars.mat',
+    #     mdict={'Z': Z_true, 'A': A, 'S': S, 'C': C})

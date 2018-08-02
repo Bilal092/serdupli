@@ -7,7 +7,7 @@ ordering
 import warnings
 import sys
 import numpy as np
-from scipy.sparse import issparse, coo_matrix, lil_matrix
+from scipy.sparse import issparse, coo_matrix, lil_matrix, find
 from scipy.linalg import toeplitz
 from mdso import SpectralBaseline
 import matplotlib.pyplot as plt
@@ -56,15 +56,29 @@ def plot_mat(X, title='', permut=None):
 
     if permut is not None:
         if issparse(X):
-            Xl = X.tolil(copy=True)
+            (iis, jjs, _) = find(X)
+            pis = permut[iis]
+            pjs = permut[jjs]
+            # Xl = X.tolil(copy=True)
         else:
             Xl = X.copy()
-        Xl = Xl[permut, :]
-        Xl = Xl.T[permut, :].T
+            Xl = Xl[permut, :]
+            Xl = Xl.T[permut, :].T
 
     fig = plt.figure(1)
-    ax = fig.add_subplot(111)
-    cax = ax.matshow(Xl, interpolation='nearest')
+    plt.gcf().clear()
+    axes = fig.subplots(1, 2)
+    # ax = fig.add_subplot(111)
+    if issparse(X):
+        if permut is None:
+            (pis, pjs, _) = find(X)
+        # cax = ax.plot(pis, pjs, 'o', mfc='none')
+        axes[0].plot(pis, pjs, 'o', mfc='none')
+    else:
+        # cax = ax.matshow(Xl, interpolation='nearest')
+        axes[0].matshow(Xl, interpolation='nearest')
+    if permut is not None:
+        axes[1].plot(np.arange(len(permut)), permut, 'o', mfc='none')
     # fig.colorbar(cax)
     plt.title(title)
     plt.draw()
@@ -74,7 +88,10 @@ def plot_mat(X, title='', permut=None):
 
 
 def spectral_eta_trick(X, n_iter=50, dh=1, p=1, return_score=False,
-                       do_plot=False):
+                       do_plot=False, circular=False, norm_laplacian=None,
+                       norm_adjacency=None, eigen_solver=None,
+                       scale_embedding=False,
+                       add_momentum=None):
     """
     Performs Spectral Eta-trick Algorithm from
     https://arxiv.org/pdf/1806.00664.pdf
@@ -86,7 +103,11 @@ def spectral_eta_trick(X, n_iter=50, dh=1, p=1, return_score=False,
     (n, n2) = X.shape
     assert(n == n2)
 
-    spectral_algo = SpectralBaseline()
+    spectral_algo = SpectralBaseline(circular=circular,
+                                     norm_laplacian=norm_laplacian,
+                                     norm_adjacency=norm_adjacency,
+                                     eigen_solver=eigen_solver,
+                                     scale_embedding=scale_embedding)
 
     best_perm = np.arange(n)
     best_score = n**(p+2)
@@ -97,6 +118,8 @@ def spectral_eta_trick(X, n_iter=50, dh=1, p=1, return_score=False,
 
         r, c, v = X.row, X.col, X.data
         eta_vec = np.ones(len(v))
+        if add_momentum:
+            eta_old = np.ones(len(v))
 
         for it in range(n_iter):
 
@@ -106,6 +129,9 @@ def spectral_eta_trick(X, n_iter=50, dh=1, p=1, return_score=False,
             new_perm = spectral_algo.fit_transform(X_w)
             if np.all(new_perm == best_perm):
                 break
+            if new_perm[0] > new_perm[-1]:
+                new_perm *= -1
+                new_perm += (n)
 
             new_score = p_sum_score(X, permut=new_perm, p=p)
             if new_score < best_score:
@@ -113,10 +139,14 @@ def spectral_eta_trick(X, n_iter=50, dh=1, p=1, return_score=False,
 
             p_inv = np.argsort(new_perm)
 
-            eta_vec = np.maximum(dh, abs(p_inv[r] - p_inv[c]))
+            eta_vec = abs(p_inv[r] - p_inv[c])
+            if circular:
+                # pass
+                eta_vec = np.minimum(eta_vec, n - eta_vec)
+            eta_vec = np.maximum(dh, eta_vec)
 
             if do_plot:
-                title = 'it {}, {}-SUM: {}'.format(it, p, new_score)
+                title = "it %d, %d-SUM: %1.5e" % (it, p, new_score)
                 plot_mat(X, permut=new_perm, title=title)
 
     else:
@@ -126,6 +156,9 @@ def spectral_eta_trick(X, n_iter=50, dh=1, p=1, return_score=False,
 
             X_w = np.divide(X, eta_mat)
             new_perm = spectral_algo.fit_transform(X_w)
+            if new_perm[0] > new_perm[-1]:
+                new_perm *= -1
+                new_perm += (n+1)
             if np.all(new_perm == best_perm):
                 break
 
@@ -136,11 +169,14 @@ def spectral_eta_trick(X, n_iter=50, dh=1, p=1, return_score=False,
             p_inv = np.argsort(new_perm)
 
             eta_mat = abs(np.tile(p_inv, n) - np.repeat(p_inv, n))
+            if circular:
+                # pass
+                eta_mat = np.minimum(eta_mat, n - eta_mat)
             eta_mat = np.reshape(eta_mat, (n, n))
             eta_mat = np.maximum(dh, eta_mat)
 
             if do_plot:
-                title = 'it {}, {}-SUM: {}'.format(it, p, new_score)
+                title = "it %d, %d-SUM: %1.5e" % (it, p, new_score)
                 plot_mat(X, permut=new_perm, title=title)
 
     if return_score:
@@ -151,15 +187,22 @@ def spectral_eta_trick(X, n_iter=50, dh=1, p=1, return_score=False,
 
 class SpectralEtaTrick():
 
-    def __init__(self, n_iter=20, dh=1, return_score=False):
+    def __init__(self, n_iter=20, dh=1, return_score=False, circular=False,
+                 norm_adjacency=None, eigen_solver=None):
         self.n_iter = n_iter
         self.dh = dh
         self.return_score = return_score
+        self.circular = circular
+        self.norm_adjacency = norm_adjacency
+        self.eigen_solver = eigen_solver
 
     def fit(self, X):
 
         ordering_ = spectral_eta_trick(X, n_iter=self.n_iter, dh=self.dh,
-                                       return_score=self.return_score)
+                                       return_score=self.return_score,
+                                       circular=self.circular,
+                                       norm_adjacency=self.norm_adjacency,
+                                       eigen_solver=self.eigen_solver)
         self.ordering = ordering_
 
         return self

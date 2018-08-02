@@ -116,12 +116,15 @@ def proj2dupli(S, Z, A, u_b=None, k_sparse=None, include_main_diag=True):
         these_ind = tril_map[these_ind]
         # if len(these_ind) == 1:
         if type(these_ind) is not np.ndarray:
-            s_new[these_ind] = svs[k]
+            s_new[these_ind] = svs[k]  # ??
         else:
             s_vec = s_flat[these_ind]
             # Perform the projection for subscript pair (i,j)
             sparse_param = len(these_ind)
             sparse_param = np.count_nonzero(s_vec)
+            # print(s_vec)
+            if sparse_param < len(these_ind):
+                # print('ok')
             s_new[these_ind] = one_proj_sparse(s_vec,
                                                svs[k], u_b=u_b,
                                                k_sparse=sparse_param)
