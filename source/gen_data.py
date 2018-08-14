@@ -51,6 +51,30 @@ def gen_dupl_mat(S, n_by_N, prop_dupli=1, rand_seed=1):
 
     return(Z, A, C)
 
+def gen_chr_mat(n, n_chr):
+
+    if n_chr == 1:
+        X = np.ones((n, n))
+        return(X)
+    x_flat = np.zeros(n**2)
+    size_chr = n // n_chr
+    for k in range(n_chr):
+        sub_idxs = np.arange(size_chr) + k * size_chr
+        n_clus = len(sub_idxs)
+        iis = np.repeat(sub_idxs, n_clus)
+        jjs = np.tile(sub_idxs, n_clus)
+        idxs = np.ravel_multi_index((iis, jjs), (n, n))
+        x_flat[idxs] = 1
+    sub_idxs = np.arange((n_chr) * size_chr, n)
+    n_clus = len(sub_idxs)
+    iis = np.repeat(sub_idxs, n_clus)
+    jjs = np.tile(sub_idxs, n_clus)
+    idxs = np.ravel_multi_index((iis, jjs), (n, n))
+    x_flat[idxs] = 1
+    X = np.reshape(x_flat, (n, n))
+    return X
+
+
 
 
 
