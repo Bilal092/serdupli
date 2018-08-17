@@ -4,6 +4,7 @@
 # Compiled python modules.
 *.pyc
 /source/__pycache__/
+/source/__pycache__/*
 .vscode/
 # DNA data files
 /examples/e_coli/ecoli_data/

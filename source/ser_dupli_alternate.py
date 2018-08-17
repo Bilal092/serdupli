@@ -72,7 +72,7 @@ def ser_dupli_alt(A, C, seriation_solver='eta-trick', n_iter=100,
     if seriation_solver == 'mdso':
         my_solver = SpectralOrdering(norm_laplacian='random_walk')
     elif seriation_solver == 'eta-trick':
-        my_solver = SpectralEtaTrick(n_iter=100)
+        my_solver = SpectralEtaTrick(n_iter=4)
     else:  # use basic spectral Algorithm from Atkins et. al.
         my_solver = SpectralBaseline()
 
@@ -110,7 +110,7 @@ def ser_dupli_alt(A, C, seriation_solver='eta-trick', n_iter=100,
                         include_main_diag=include_main_diag, verbose=0,
                         u_b=max_val)
         print(R_t.min())
-        R_t -= R_t.min()
+        # R_t -= R_t.min()
 
         Z = Z[:, permu]
 
@@ -143,7 +143,7 @@ def ser_dupli_alt_clust(A, C, seriation_solver='eta-trick', n_iter=100,
     if seriation_solver == 'mdso':
         my_solver = SpectralOrdering(norm_laplacian='random_walk')
     elif seriation_solver == 'eta-trick':
-        my_solver = SpectralEtaTrick(n_iter=100)
+        my_solver = SpectralEtaTrick(n_iter=10)
     else:  # use basic spectral Algorithm from Atkins et. al.
         my_solver = SpectralBaseline()
 
@@ -170,58 +170,69 @@ def ser_dupli_alt_clust(A, C, seriation_solver='eta-trick', n_iter=100,
         # S_old
         # S_t -= S_t.min()  # to make sure it is non-negative after linprog
 
+        permu1 = my_solver.fit_transform(S_t)
+        S_t = S_t[permu1, :]
+        S_t = S_t.T[permu1, :].T
+
         # Cluster the similarity matrix
-        labels_ = cluster_solver.fit_predict(S_t.max() - S_t)
+        if (it % 10 == 0) and (it > 9):
+            labels_ = cluster_solver.fit_predict(R_t.max() - R_t)
 
-        # Reorder each cluster
-        s_clus = np.zeros(N**2)  # TODO: adapt to the sparse case
-        s_flat = S_t.flatten()
-        permu = np.zeros(0, dtype='int32')
-        # permu = np.arange(N)
-        for k_ in range(n_clusters):
-            in_clst = np.where(labels_ == k_)[0]
-            sub_mat = S_t[in_clst, :]
-            sub_mat = sub_mat.T[in_clst, :].T
-            sub_perm = my_solver.fit_transform(sub_mat)
-            sub_cc = in_clst[sub_perm]
+            # Reorder each cluster
+            s_clus = np.zeros(N**2)  # TODO: adapt to the sparse case
+            s_flat = S_t.flatten()
+            permu = np.zeros(0, dtype='int32')
+            # permu = np.arange(N)
+            for k_ in range(n_clusters):
+                in_clst = np.where(labels_ == k_)[0]
+                sub_mat = S_t[in_clst, :]
+                sub_mat = sub_mat.T[in_clst, :].T
+                sub_perm = my_solver.fit_transform(sub_mat)
+                sub_cc = in_clst[sub_perm]
 
-            # inv_sub_perm = np.argsort(sub_perm)
-            # permu[in_clst] = sub_cc  # in_clst[inv_sub_perm]
-            # permu[in_clst] = in_clst[inv_sub_perm]
-            permu = np.append(permu, sub_cc)
+                # inv_sub_perm = np.argsort(sub_perm)
+                # permu[in_clst] = sub_cc  # in_clst[inv_sub_perm]
+                # permu[in_clst] = in_clst[inv_sub_perm]
+                permu = np.append(permu, sub_cc)
 
-            # (iis, jjs) = np.meshgrid(in_clst, in_clst)
-            # iis = iis.flatten()
-            # jjs = jjs.flatten()
-            iis = np.repeat(in_clst, len(in_clst))
-            jjs = np.tile(in_clst, len(in_clst))
-            sub_idx = np.ravel_multi_index((iis, jjs), (N, N))
-            #
-            # (iord, jord) = np.meshgrid(sub_cc, sub_cc)
-            # iord = iord.flatten()
-            # jord = jord.flatten()
-            # sub_ord = np.ravel_multi_index((iord, jord), (N, N))
-            #
-            s_clus[sub_idx] = s_flat[sub_idx]  # Projection on block matrices
-            # S_clus[in_clst, :][:, in_clst] += sub_mat
+                # (iis, jjs) = np.meshgrid(in_clst, in_clst)
+                # iis = iis.flatten()
+                # jjs = jjs.flatten()
+                iis = np.repeat(in_clst, len(in_clst))
+                jjs = np.tile(in_clst, len(in_clst))
+                sub_idx = np.ravel_multi_index((iis, jjs), (N, N))
+                #
+                # (iord, jord) = np.meshgrid(sub_cc, sub_cc)
+                # iord = iord.flatten()
+                # jord = jord.flatten()
+                # sub_ord = np.ravel_multi_index((iord, jord), (N, N))
+                #
+                s_clus[sub_idx] = s_flat[sub_idx]  # Projection on block matrices
+                # S_clus[in_clst, :][:, in_clst] += sub_mat
 
-        is_identity = (np.all(permu == np.arange(N)) or
-                       np.all(permu == np.arange(N)[::-1]))
-        # if is_identity:
-        #     break
+            is_identity = (np.all(permu == np.arange(N)) or
+                        np.all(permu == np.arange(N)[::-1]))
+            # if is_identity:
+            #     break
 
-        alpha_ = 0.
-        S_clus = (1 - alpha_) * np.reshape(s_clus, (N, N)) + alpha_ * S_t
-        # S_clus = np.reshape(s_clus, (N, N))
-        S_tp = S_clus.copy()[permu, :]
-        # S_tp = S_t.copy()[permu, :]
-        S_tp = S_tp.T[permu, :].T
-        # S_tp = S_tp.T[permu, :].T
+            alpha_ = 0.
+            S_clus = (1 - alpha_) * np.reshape(s_clus, (N, N)) + alpha_ * S_t
+            # S_clus = np.reshape(s_clus, (N, N))
+            S_tp = S_clus.copy()[permu, :]
+            # S_tp = S_t.copy()[permu, :]
+            S_tp = S_tp.T[permu, :].T
+            # S_tp = S_tp.T[permu, :].T
 
-        # R_t = proj2Rmat(S_tp, do_strong=do_strong,
-        #                 include_main_diag=include_main_diag, verbose=0,
-        #                 u_b=max_val)
-        R_t = S_tp
+        else:
+            permu = np.arange(N)
+            S_tp = S_t
+
+        permu = permu1[permu]
+
+        R_t = proj2Rmat(S_tp, do_strong=do_strong,
+                        include_main_diag=include_main_diag, verbose=0,
+                        u_b=max_val)
+        # R_t = S_tp
 
         Z = Z[:, permu]
 
@@ -234,7 +245,7 @@ def ser_dupli_alt_clust(A, C, seriation_solver='eta-trick', n_iter=100,
                 title += " mean dist {}".format(mean_dist)
                 # if is_inv:
                 #     Z = Z[:, ::-1]
-            visualize_mat(S_t, S_tp, S_clus, Z, permu, title, Z_true=Z_true)
+            visualize_mat(S_t, S_tp, R_t, Z, permu, title, Z_true=Z_true)
 
         S_t = proj2dupli(R_t, Z, A, u_b=max_val, k_sparse=None,
                          include_main_diag=include_main_diag)
@@ -299,7 +310,7 @@ def ser_dupli_alt_clust2(A, C, seriation_solver='eta-trick', n_iter=100,
     if seriation_solver == 'mdso':
         my_solver = SpectralOrdering(norm_laplacian='random_walk')
     elif seriation_solver == 'eta-trick':
-        my_solver = SpectralEtaTrick(n_iter=100)
+        my_solver = SpectralEtaTrick(n_iter=10)
     else:  # use basic spectral Algorithm from Atkins et. al.
         my_solver = SpectralBaseline()
 
@@ -477,6 +488,7 @@ if __name__ == '__main__':
     n_by_N = 0.65
     prop_dupli = 1
     rand_seed = 1
+    np.random.seed(rand_seed)
 
     (Z, A, C) = gen_dupl_mat(S, n_by_N, prop_dupli=prop_dupli,
                              rand_seed=rand_seed)
@@ -489,13 +501,13 @@ if __name__ == '__main__':
 
     Z_true = Z.toarray()
 
-    ser_dupli_alt(A, C, seriation_solver='eta-trick', n_iter=100,
+    ser_dupli_alt(A, C, seriation_solver='mdso', n_iter=100,
                   do_strong=False,
                   include_main_diag=True, do_show=True, Z_true=Z_true)
 
-    (S_, Z_) = ser_dupli_alt_clust(A, C, seriation_solver='eta-trick', n_iter=20,
-                        n_clusters=5, do_strong=False, include_main_diag=True,
-                        do_show=True, Z_true=Z_true)
+    # (S_, Z_) = ser_dupli_alt_clust(A, C, seriation_solver='eta-trick', n_iter=100,
+    #                     n_clusters=5, do_strong=False, include_main_diag=True,
+    #                     do_show=True, Z_true=Z_true)
 
     # (S_, Z_, R_) = ser_dupli_alt_clust2(A, C, seriation_solver='eta-trick', n_iter=20,
     #                     n_clusters=1, do_strong=False, include_main_diag=True,
