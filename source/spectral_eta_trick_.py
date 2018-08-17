@@ -202,6 +202,13 @@ def spectral_eta_trick2(X, n_iter=50, dh=1, p=1, return_score=False,
     (n, n2) = X.shape
     assert(n == n2)
 
+    if n < 3:
+        best_perm = np.arange(n)
+        if return_score:
+            return(best_perm, -1)
+        else:
+            return(best_perm)
+
     spectral_algo = SpectralBaseline(circular=circular,
                                      norm_laplacian=norm_laplacian,
                                      norm_adjacency=norm_adjacency,
@@ -278,6 +285,7 @@ def spectral_eta_trick2(X, n_iter=50, dh=1, p=1, return_score=False,
             p_inv = np.argsort(new_perm)
 
             d_ = 5
+            d_ = min(n-1, d_)
             # eta_vec = np.sum(abs(embedding[r, :d_] - embedding[c, :d_]), axis=1)
             eta_mat = np.identity(n).flatten()
             for dim in range(d_):

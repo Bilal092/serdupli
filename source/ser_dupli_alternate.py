@@ -131,14 +131,25 @@ def ser_dupli_alt(A, C, seriation_solver='eta-trick', n_iter=100,
     return(S_t, Z)
 
 
-def clusterize_mat(X, n_clusters):
+def clusterize_mat(X, n_clusters, reord_mat=True, reord_method='eta-trick'):
     # X2 = X.copy()
     # minX = X2.min()
     # X2 -= minX
+    if reord_mat:
+        if reord_method == 'eta-trick':
+            my_method = SpectralEtaTrick(n_iter=10)
+        elif reord_method == 'mdso':
+            my_method = SpectralOrdering()
+        else:
+            my_method = SpectralBaseline()
+
     ebd = spectral_embedding(X - X.min(), norm_laplacian=True, norm_adjacency='coifman')
     N = X.shape[0]
     if n_clusters == 1:
-        return(X)
+        if reord_mat:
+            return(X, np.arange(N))
+        else:
+            return(X)
     else:
         fied_vec = ebd[:, 0]
         fied_diff = abs(fied_vec[1:] - fied_vec[:-1])
@@ -147,6 +158,8 @@ def clusterize_mat(X, n_clusters):
         bps = np.sort(bps)
         x_flat = X.flatten()
         s_clus = np.zeros(N**2)
+        if reord_mat:
+            permu = np.zeros(0, dtype='int32')
         for k_ in range(n_clusters):
             in_clst = np.arange(bps[k_], bps[k_+1])
             iis = np.repeat(in_clst, len(in_clst))
@@ -154,13 +167,24 @@ def clusterize_mat(X, n_clusters):
             sub_idx = np.ravel_multi_index((iis, jjs), (N, N))
             s_clus[sub_idx] = x_flat[sub_idx]  # Projection on block matrices
 
+            if reord_mat:
+                sub_mat = X[in_clst, :]
+                sub_mat = sub_mat.T[in_clst, :].T
+                sub_perm = my_method.fit_transform(sub_mat - sub_mat.min())
+                sub_cc = in_clst[sub_perm]
+                permu = np.append(permu, sub_cc)
+
         S_clus = np.reshape(s_clus, (N, N))
-        return(S_clus)
+        if reord_mat:
+            return(S_clus, permu)
+        else:
+            return(S_clus)
 
 
 def ser_dupli_alt_clust3(A, C, seriation_solver='eta-trick', n_iter=100,
                   n_clusters=1, do_strong=False,
-                  include_main_diag=True, do_show=True, Z_true=None):
+                  include_main_diag=True, do_show=True, Z_true=None,
+                  cluster_interval=10):
 
     (n_, n1) = A.shape
     n2 = len(C)
@@ -204,17 +228,27 @@ def ser_dupli_alt_clust3(A, C, seriation_solver='eta-trick', n_iter=100,
         S_tp = S_t.copy()[permu, :]
         S_tp = S_tp.T[permu, :].T
 
-        if it % 10 == 0:
-            R_clus = clusterize_mat(S_tp, n_clusters)
-        else:
-            R_clus = S_tp
+        # if False:  #(it % cluster_interval == 0) and (it > 0):
+        #     R_clus, p2 = clusterize_mat(S_tp, n_clusters, reord_mat=False)
+        # else:
+        #     R_clus = S_tp
+        #     p2 = np.arange(N)
+
+        # R_clus = R_clus[p2, :]
+        # R_clus = R_clus.T[:, p2].T
+
+        # permu = permu[p2]
+
+        R_clus = clusterize_mat(S_tp, n_clusters, reord_mat=False)
 
 
         R_t = proj2Rmat(R_clus, do_strong=do_strong,
                         include_main_diag=include_main_diag, verbose=0,
                         u_b=max_val)
         print(R_t.min())
-        R_clus = clusterize_mat(R_t, n_clusters)
+
+        # R_clus = clusterize_mat(R_t, n_clusters, reord_mat=False)
+
         # R_t -= R_t.min()
 
         Z = Z[:, permu]
@@ -610,9 +644,9 @@ if __name__ == '__main__':
     #               do_strong=False,
     #               include_main_diag=True, do_show=True, Z_true=Z_true)
 
-    (S_, Z_) = ser_dupli_alt_clust3(A, C, seriation_solver='odij', n_iter=100,
+    (S_, Z_) = ser_dupli_alt_clust3(A, C, seriation_solver='eta-trick', n_iter=100,
                         n_clusters=5, do_strong=False, include_main_diag=True,
-                        do_show=True, Z_true=Z_true)
+                        do_show=True, Z_true=Z_true, cluster_interval=1)
 
     # (S_, Z_, R_) = ser_dupli_alt_clust2(A, C, seriation_solver='eta-trick', n_iter=20,
     #                     n_clusters=1, do_strong=False, include_main_diag=True,
