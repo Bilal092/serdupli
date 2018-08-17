@@ -11,6 +11,7 @@ from scipy.sparse import issparse, coo_matrix, lil_matrix, find
 from scipy.linalg import toeplitz
 from mdso import SpectralBaseline
 import matplotlib.pyplot as plt
+from mdso.spectral_embedding_ import spectral_embedding
 
 
 def p_sum_score(X, p=1, permut=None, normalize=False):
@@ -131,7 +132,7 @@ def spectral_eta_trick(X, n_iter=50, dh=1, p=1, return_score=False,
                 break
             if new_perm[0] > new_perm[-1]:
                 new_perm *= -1
-                new_perm += (n)
+                new_perm += (n)  # should it not be n-1 ?!
 
             new_score = p_sum_score(X, permut=new_perm, p=p)
             if new_score < best_score:
@@ -158,7 +159,7 @@ def spectral_eta_trick(X, n_iter=50, dh=1, p=1, return_score=False,
             new_perm = spectral_algo.fit_transform(X_w)
             if new_perm[0] > new_perm[-1]:
                 new_perm *= -1
-                new_perm += (n+1)
+                new_perm += (n-1)
             if np.all(new_perm == best_perm):
                 break
 
@@ -185,9 +186,127 @@ def spectral_eta_trick(X, n_iter=50, dh=1, p=1, return_score=False,
         return(best_perm)
 
 
+def spectral_eta_trick2(X, n_iter=50, dh=1, p=1, return_score=False,
+                       do_plot=False, circular=False, norm_laplacian=None,
+                       norm_adjacency=None, eigen_solver=None,
+                       scale_embedding=False,
+                       add_momentum=None):
+    """
+    Performs Spectral Eta-trick Algorithm from
+    https://arxiv.org/pdf/1806.00664.pdf
+    which calls several instances of the Spectral Ordering baseline (Atkins) to
+    try to minimize 1-SUM or Huber-SUM (instead of 2-SUM)
+    with the so-called eta-trick.
+    """
+
+    (n, n2) = X.shape
+    assert(n == n2)
+
+    spectral_algo = SpectralBaseline(circular=circular,
+                                     norm_laplacian=norm_laplacian,
+                                     norm_adjacency=norm_adjacency,
+                                     eigen_solver=eigen_solver,
+                                     scale_embedding=scale_embedding)
+
+    best_perm = np.arange(n)
+    best_score = n**(p+2)
+
+    if issparse(X):
+        if not isinstance(X, coo_matrix):
+            X = coo_matrix(X)
+
+        r, c, v = X.row, X.col, X.data
+        eta_vec = np.ones(len(v))
+        if add_momentum:
+            eta_old = np.ones(len(v))
+
+        for it in range(n_iter):
+
+            X_w = X.copy()
+            X_w.data /= eta_vec
+
+            embedding = spectral_embedding(X_w)
+            new_perm = np.argsort(embedding[:, 0])
+
+            # new_perm = spectral_algo.fit_transform(X_w)
+            if np.all(new_perm == best_perm):
+                break
+            if new_perm[0] > new_perm[-1]:
+                embedding = embedding[::-1, :]
+                new_perm *= -1
+                new_perm += (n-1)
+
+            new_score = p_sum_score(X, permut=new_perm, p=p)
+            if new_score < best_score:
+                best_perm = new_perm
+
+            p_inv = np.argsort(new_perm)
+
+            # eta_vec = abs(p_inv[r] - p_inv[c])
+            d_ = 3
+            eta_vec = np.sum(abs(embedding[r, :d_] - embedding[c, :d_]), axis=1)
+            # if circular:
+            #     # pass
+            #     eta_vec = np.minimum(eta_vec, n - eta_vec)
+            # eta_vec = np.maximum(dh, eta_vec)
+
+            if do_plot:
+                title = "it %d, %d-SUM: %1.5e" % (it, p, new_score)
+                plot_mat(X, permut=new_perm, title=title)
+
+    else:
+        eta_mat = np.ones((n, n))
+
+        for it in range(n_iter):
+
+            X_w = np.divide(X, eta_mat)
+            embedding = spectral_embedding(X_w)
+            new_perm = np.argsort(embedding[:, 0])
+
+            # new_perm = spectral_algo.fit_transform(X_w)
+            # if new_perm[0] > new_perm[-1]:
+            #     embedding = embedding[::-1, :]
+            #     new_perm *= -1
+            #     new_perm += (n-1)
+            # if np.all(new_perm == best_perm):
+            #     break
+
+            new_score = p_sum_score(X, permut=new_perm, p=p)
+            if new_score < best_score:
+                best_perm = new_perm
+
+            p_inv = np.argsort(new_perm)
+
+            d_ = 5
+            # eta_vec = np.sum(abs(embedding[r, :d_] - embedding[c, :d_]), axis=1)
+            eta_mat = np.identity(n).flatten()
+            for dim in range(d_):
+                # eta_mat = eta_mat + abs(np.tile(embedding[:, dim], n) - np.repeat(embedding[:, dim], n))
+                d_perm = np.argsort(embedding[:, dim])
+                d_perm = (1./(1 + dim)) * np.argsort(d_perm)
+                eta_mat = eta_mat + abs(np.tile(d_perm, n) - np.repeat(d_perm, n))
+
+            # eta_mat = abs(np.tile(p_inv, n) - np.repeat(p_inv, n))
+            # if circular:
+            #     # pass
+            #     eta_mat = np.minimum(eta_mat, n - eta_mat)
+            eta_mat = np.reshape(eta_mat, (n, n))
+            # eta_mat = np.maximum(dh, eta_mat)
+
+            if do_plot:
+                title = "it %d, %d-SUM: %1.5e" % (it, p, new_score)
+                plot_mat(X, permut=new_perm, title=title)
+
+    if return_score:
+        return(best_perm, best_score)
+    else:
+        return(best_perm)
+
+
+
 class SpectralEtaTrick():
 
-    def __init__(self, n_iter=20, dh=1, return_score=False, circular=False,
+    def __init__(self, n_iter=15, dh=1, return_score=False, circular=False,
                  norm_adjacency=None, eigen_solver=None):
         self.n_iter = n_iter
         self.dh = dh
@@ -198,7 +317,7 @@ class SpectralEtaTrick():
 
     def fit(self, X):
 
-        ordering_ = spectral_eta_trick(X, n_iter=self.n_iter, dh=self.dh,
+        ordering_ = spectral_eta_trick2(X, n_iter=self.n_iter, dh=self.dh,
                                        return_score=self.return_score,
                                        circular=self.circular,
                                        norm_adjacency=self.norm_adjacency,
@@ -211,3 +330,31 @@ class SpectralEtaTrick():
 
         self.fit(X)
         return self.ordering
+
+
+if __name__ == '__main__':
+
+    from mdso import SimilarityMatrix, evaluate_ordering
+    import matplotlib.pyplot as plt
+
+    for i_exp in range(10):
+        np.random.seed(i_exp)
+
+        n = 150
+        data_gen = SimilarityMatrix()
+        data_gen.gen_matrix(n, type_matrix='LinearBanded', noise_prop=0.1, noise_ampl=3,
+                            apply_perm=False)
+        X = data_gen.sim_matrix
+        # plt.matshow(X)
+        # plt.show()
+
+        pp = spectral_eta_trick(X, do_plot=True, n_iter=30)
+
+        pp2 = spectral_eta_trick2(X, do_plot=True, n_iter=30)
+
+
+        kt1 = evaluate_ordering(pp, np.arange(n))
+        kt2 = evaluate_ordering(pp2, np.arange(n))
+        print("kt1: %2.2f" % (kt1))
+        print("kt2: %2.2f" % (kt2))
+

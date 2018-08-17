@@ -75,9 +75,6 @@ def gen_chr_mat(n, n_chr):
     return X
 
 
-
-
-
 if __name__ == 'main':
 
     from mdso import SimilarityMatrix
