@@ -72,7 +72,7 @@ def ser_dupli_alt(A, C, seriation_solver='eta-trick', n_iter=100,
     if seriation_solver == 'mdso':
         my_solver = SpectralOrdering(norm_laplacian='random_walk')
     elif seriation_solver == 'eta-trick':
-        my_solver = SpectralEtaTrick(n_iter=4)
+        my_solver = SpectralEtaTrick(n_iter=10)
     else:  # use basic spectral Algorithm from Atkins et. al.
         my_solver = SpectralBaseline()
 
@@ -124,6 +124,111 @@ def ser_dupli_alt(A, C, seriation_solver='eta-trick', n_iter=100,
                 if is_inv:
                     Z = Z[:, ::-1]
             visualize_mat(S_t, S_tp, R_t, Z, permu, title, Z_true=Z_true)
+
+        S_t = proj2dupli(R_t, Z, A, u_b=max_val, k_sparse=None,
+                         include_main_diag=include_main_diag)
+
+    return(S_t, Z)
+
+
+def clusterize_mat(X, n_clusters):
+    # X2 = X.copy()
+    # minX = X2.min()
+    # X2 -= minX
+    ebd = spectral_embedding(X - X.min(), norm_laplacian=True, norm_adjacency='coifman')
+    N = X.shape[0]
+    if n_clusters == 1:
+        return(X)
+    else:
+        fied_vec = ebd[:, 0]
+        fied_diff = abs(fied_vec[1:] - fied_vec[:-1])
+        bps = np.append(0, np.argsort(-fied_diff)[:n_clusters-1])
+        bps = np.append(bps, N)
+        bps = np.sort(bps)
+        x_flat = X.flatten()
+        s_clus = np.zeros(N**2)
+        for k_ in range(n_clusters):
+            in_clst = np.arange(bps[k_], bps[k_+1])
+            iis = np.repeat(in_clst, len(in_clst))
+            jjs = np.tile(in_clst, len(in_clst))
+            sub_idx = np.ravel_multi_index((iis, jjs), (N, N))
+            s_clus[sub_idx] = x_flat[sub_idx]  # Projection on block matrices
+
+        S_clus = np.reshape(s_clus, (N, N))
+        return(S_clus)
+
+
+def ser_dupli_alt_clust3(A, C, seriation_solver='eta-trick', n_iter=100,
+                  n_clusters=1, do_strong=False,
+                  include_main_diag=True, do_show=True, Z_true=None):
+
+    (n_, n1) = A.shape
+    n2 = len(C)
+    N = int(np.sum(C))
+    assert(n_ == n1 and n_ == n2)
+
+    if seriation_solver == 'mdso':
+        my_solver = SpectralOrdering(norm_laplacian='random_walk')
+    elif seriation_solver == 'eta-trick':
+        my_solver = SpectralEtaTrick(n_iter=10)
+    else:  # use basic spectral Algorithm from Atkins et. al.
+        my_solver = SpectralBaseline()
+
+    # Initialization
+    Z = np.zeros((n_, N))
+    jj = 0
+    for ii in range(n_):  # TODO : make this faster ?
+        Z[ii, jj:jj+C[ii]] = 1
+        jj += C[ii]
+    dc = np.diag(1./C)
+
+    S_t = Z.T @ dc @ A @ dc @ Z
+
+    max_val = A.max()
+
+    perm_tot = np.arange(N)
+
+    # Iterate
+    for it in range(n_iter):
+        # S_old
+        # S_t -= S_t.min()  # to make sure it is non-negative after linprog
+        # print(S_t.min())
+        permu = my_solver.fit_transform(S_t - S_t.min())
+
+        is_identity = (np.all(permu == np.arange(N)) or
+                       np.all(permu == np.arange(N)[::-1]))
+        # if is_identity:
+        #     break
+
+        # S_tp = S_t[permu, :][:, permu]
+        S_tp = S_t.copy()[permu, :]
+        S_tp = S_tp.T[permu, :].T
+
+        if it % 10 == 0:
+            R_clus = clusterize_mat(S_tp, n_clusters)
+        else:
+            R_clus = S_tp
+
+
+        R_t = proj2Rmat(R_clus, do_strong=do_strong,
+                        include_main_diag=include_main_diag, verbose=0,
+                        u_b=max_val)
+        print(R_t.min())
+        R_clus = clusterize_mat(R_t, n_clusters)
+        # R_t -= R_t.min()
+
+        Z = Z[:, permu]
+
+        perm_tot = perm_tot[permu]
+
+        if do_show:
+            title = "iter {}".format(int(it))
+            if Z_true is not None:
+                mean_dist, _, is_inv = eval_assignments(Z, Z_true)
+                title += " mean dist {}".format(mean_dist)
+                if is_inv:
+                    Z = Z[:, ::-1]
+            visualize_mat(R_clus, S_tp, R_t, Z, permu, title, Z_true=Z_true)
 
         S_t = proj2dupli(R_t, Z, A, u_b=max_val, k_sparse=None,
                          include_main_diag=include_main_diag)
@@ -501,13 +606,13 @@ if __name__ == '__main__':
 
     Z_true = Z.toarray()
 
-    ser_dupli_alt(A, C, seriation_solver='mdso', n_iter=100,
-                  do_strong=False,
-                  include_main_diag=True, do_show=True, Z_true=Z_true)
+    # ser_dupli_alt(A, C, seriation_solver='mdso', n_iter=100,
+    #               do_strong=False,
+    #               include_main_diag=True, do_show=True, Z_true=Z_true)
 
-    # (S_, Z_) = ser_dupli_alt_clust(A, C, seriation_solver='eta-trick', n_iter=100,
-    #                     n_clusters=5, do_strong=False, include_main_diag=True,
-    #                     do_show=True, Z_true=Z_true)
+    (S_, Z_) = ser_dupli_alt_clust3(A, C, seriation_solver='odij', n_iter=100,
+                        n_clusters=5, do_strong=False, include_main_diag=True,
+                        do_show=True, Z_true=Z_true)
 
     # (S_, Z_, R_) = ser_dupli_alt_clust2(A, C, seriation_solver='eta-trick', n_iter=20,
     #                     n_clusters=1, do_strong=False, include_main_diag=True,
