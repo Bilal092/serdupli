@@ -162,6 +162,8 @@ def clusterize_mat(X, n_clusters, reord_mat=True, reord_method='eta-trick'):
             permu = np.zeros(0, dtype='int32')
         for k_ in range(n_clusters):
             in_clst = np.arange(bps[k_], bps[k_+1])
+            if not in_clst.size:
+                continue
             iis = np.repeat(in_clst, len(in_clst))
             jjs = np.tile(in_clst, len(in_clst))
             sub_idx = np.ravel_multi_index((iis, jjs), (N, N))
@@ -239,8 +241,15 @@ def ser_dupli_alt_clust3(A, C, seriation_solver='eta-trick', n_iter=100,
 
         # permu = permu[p2]
 
-        R_clus = clusterize_mat(S_tp, n_clusters, reord_mat=False)
+        if (it % cluster_interval == 0) and (it > 0):
+            R_clus, p2 = clusterize_mat(S_tp, n_clusters, reord_mat=True)
+            R_clus = R_clus[p2, :]
+            R_clus = R_clus.T[:, p2].T
+        else:
+            R_clus = S_tp
+            p2 = np.arange(N)
 
+        permu = permu[p2]
 
         R_t = proj2Rmat(R_clus, do_strong=do_strong,
                         include_main_diag=include_main_diag, verbose=0,
@@ -267,7 +276,7 @@ def ser_dupli_alt_clust3(A, C, seriation_solver='eta-trick', n_iter=100,
         S_t = proj2dupli(R_t, Z, A, u_b=max_val, k_sparse=None,
                          include_main_diag=include_main_diag)
 
-    return(S_t, Z)
+    return(S_t, Z, R_clus, S_tp)
 
 
 def ser_dupli_alt_clust(A, C, seriation_solver='eta-trick', n_iter=100,
@@ -644,7 +653,7 @@ if __name__ == '__main__':
     #               do_strong=False,
     #               include_main_diag=True, do_show=True, Z_true=Z_true)
 
-    (S_, Z_) = ser_dupli_alt_clust3(A, C, seriation_solver='eta-trick', n_iter=100,
+    (S_t, Z, R_clus, S_tp) = ser_dupli_alt_clust3(A, C, seriation_solver='eta-trick', n_iter=10,
                         n_clusters=5, do_strong=False, include_main_diag=True,
                         do_show=True, Z_true=Z_true, cluster_interval=1)
 
