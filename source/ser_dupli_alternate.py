@@ -5,7 +5,7 @@ Projects a matrix to the set of duplication constraints Z.T S Z = A
 """
 import warnings
 import numpy as np
-from scipy.sparse import find, coo_matrix
+from scipy.sparse import find, coo_matrix, issparse
 import matplotlib.pyplot as plt
 from sklearn.cluster import SpectralClustering
 from mdso import SpectralOrdering, SpectralBaseline
@@ -19,6 +19,54 @@ from eval_dupli import eval_assignments
 from gen_data import gen_chr_mat
 
 from mdso.spectral_embedding_ import spectral_embedding
+
+
+def is_symmetric(m):
+    """Check if a sparse matrix is symmetric
+    (from Saullo Giovani)
+
+    Parameters
+    ----------
+    m : array or sparse matrix
+        A square matrix.
+
+    Returns
+    -------
+    check : bool
+        The check result.
+
+    """
+    if m.shape[0] != m.shape[1]:
+        raise ValueError('m must be a square matrix')
+    if issparse(m):
+        if not isinstance(m, coo_matrix):
+            m = coo_matrix(m)
+
+        r, c, v = m.row, m.col, m.data
+        tril_no_diag = r > c
+        triu_no_diag = c > r
+
+        if triu_no_diag.sum() != tril_no_diag.sum():
+            return False
+
+        rl = r[tril_no_diag]
+        cl = c[tril_no_diag]
+        vl = v[tril_no_diag]
+        ru = r[triu_no_diag]
+        cu = c[triu_no_diag]
+        vu = v[triu_no_diag]
+
+        sortl = np.lexsort((cl, rl))
+        sortu = np.lexsort((ru, cu))
+        vl = vl[sortl]
+        vu = vu[sortu]
+
+        check = np.allclose(vl, vu)
+
+    else:
+        check = np.allclose(m, m.T, atol=1e-6)
+
+    return check
 
 
 def visualize_mat(S_t, S_tp, R_t, Z, perm, title, Z_true=None, fig_nb=1):
@@ -131,7 +179,123 @@ def ser_dupli_alt(A, C, seriation_solver='eta-trick', n_iter=100,
     return(S_t, Z)
 
 
-def clusterize_mat(X, n_clusters, reord_mat=True, reord_method='eta-trick'):
+def linearized_cluster(X, K, scale_rho=False, accept_qtile=50):
+
+    (n1, n) = X.shape
+    assert(n1 == n)
+
+    # Compute crossing curves
+    if K is not None:
+        m = n // K
+    rho = np.zeros(n)
+    rho_p = np.zeros(n)
+    rho_m = np.zeros(n)
+    X = np.tril(X, -1) - np.tril(X, -m)
+    # X_a = np.tril(X[:, ::-1], -1)
+    # X_a = X_a - np.tril(X_a, -m)
+    X_a = X[:, ::-1]
+    X_p = X_a[:-1, :][:, :-1]
+
+    for i in range(1, n-1):
+        this_m = n - abs(n-1-2*i)
+        # print(len(np.diag(X_a, n-1 - 2*i))-this_m)
+        this_m = min(m, this_m)
+        if this_m > 0:
+            if not scale_rho:
+                this_m = 1
+            this_rho = (1./this_m) * np.trace(X_a, n-1 - 2*i)
+        this_m = n - abs(n-1-2*i+1)
+        this_m = min(m, this_m)
+        if this_m > 0:
+            if not scale_rho:
+                this_m = 1
+            this_rho += 1/2 * (1./this_m) * np.trace(X_a, n-1 - 2*i + 1)
+        this_m = n - abs(n-1-2*i-1)
+        this_m = min(m, this_m)
+        if this_m > 0:
+            if not scale_rho:
+                this_m = 1
+            this_rho += 1/2 * (1./this_m) * np.trace(X_a, n-1 - 2*i - 1)
+        
+        rho[i] = this_rho
+
+    # smooth rho
+    w_len = min(5, 1+n//20)
+    rho_multi = np.zeros((n, 2 * w_len + 1))
+    for k in range(1, w_len):
+        rho_multi[:-k, k] = rho[k:]
+        rho_multi[k:, k] += rho[:-k]
+    rho_multi[:, 0] =  rho
+    rho_avg = np.sum(rho_multi, axis=1)
+
+    # Find valleys
+    # We use a heuristic here...
+    slope_sign = rho_avg[1:] - rho_avg[:-1]
+    slope_sign = np.sign(slope_sign)
+    slope_sign = np.append(slope_sign[0], slope_sign)
+    sign_switch = slope_sign[1:] - slope_sign[:-1]
+    bps = np.where(sign_switch)[0]
+    ok_bps = np.zeros(1, dtype='int32')
+    pctile = np.percentile(rho_avg, accept_qtile)
+    for bp in bps:
+        if np.all(slope_sign[bp-w_len:bp] == -1) and np.all(slope_sign[bp+1:bp+w_len] == 1):
+            if rho[bp] < pctile:
+                ok_bps = np.append(ok_bps, bp)
+    ok_bps = np.append(ok_bps, n)
+    return(ok_bps)
+
+
+def clusterize_from_bps(X, bps, reord_clusters=True, reord_method=None):
+
+    (N, N2) = X.shape
+    assert(N == N2)
+    n_clusters = len(bps) - 1
+
+    if reord_clusters:
+        permu = np.zeros(0, dtype='int32')
+        if reord_method == 'eta-trick':
+            my_method = SpectralEtaTrick(n_iter=10)
+        elif reord_method == 'mdso':
+            my_method = SpectralOrdering()
+        else:
+            my_method = SpectralBaseline()
+
+    x_flat = X.flatten()
+    s_clus = np.zeros(N**2)
+    for k_ in range(n_clusters):
+        in_clst = np.arange(bps[k_], bps[k_+1])
+        if not in_clst.size:
+            print("empty cluster!")
+            continue
+        iis = np.repeat(in_clst, len(in_clst))
+        jjs = np.tile(in_clst, len(in_clst))
+        sub_idx = np.ravel_multi_index((iis, jjs), (N, N))
+        s_clus[sub_idx] = x_flat[sub_idx]  # Projection on block matrices
+
+        if reord_clusters:
+            sub_mat = X.copy()[in_clst, :]
+            sub_mat = sub_mat.T[in_clst, :].T
+            sub_perm = my_method.fit_transform(sub_mat - sub_mat.min())
+            sub_cc = in_clst[sub_perm]
+            permu = np.append(permu, sub_cc)
+
+    S_clus = np.reshape(s_clus, (N, N))
+
+    if reord_clusters:
+        return(S_clus, permu)
+    else:
+        return(S_clus)
+
+
+def simple_clusters(X, K, reord_clusters=True, reord_method='eta-trick'):
+    bps = linearized_cluster(X, K)
+
+    return(clusterize_from_bps(X, bps, reord_clusters=reord_clusters))
+
+
+
+
+def clusterize_mat(X, n_clusters, reord_mat=False, reord_method='eta-trick'):
     # X2 = X.copy()
     # minX = X2.min()
     # X2 -= minX
@@ -143,7 +307,7 @@ def clusterize_mat(X, n_clusters, reord_mat=True, reord_method='eta-trick'):
         else:
             my_method = SpectralBaseline()
 
-    ebd = spectral_embedding(X - X.min(), norm_laplacian=True, norm_adjacency='coifman')
+    ebd = spectral_embedding(X - X.min(), norm_laplacian='random_walk', norm_adjacency=False)
     N = X.shape[0]
     if n_clusters == 1:
         if reord_mat:
@@ -163,6 +327,7 @@ def clusterize_mat(X, n_clusters, reord_mat=True, reord_method='eta-trick'):
         for k_ in range(n_clusters):
             in_clst = np.arange(bps[k_], bps[k_+1])
             if not in_clst.size:
+                print("empty cluster!")
                 continue
             iis = np.repeat(in_clst, len(in_clst))
             jjs = np.tile(in_clst, len(in_clst))
@@ -170,7 +335,7 @@ def clusterize_mat(X, n_clusters, reord_mat=True, reord_method='eta-trick'):
             s_clus[sub_idx] = x_flat[sub_idx]  # Projection on block matrices
 
             if reord_mat:
-                sub_mat = X[in_clst, :]
+                sub_mat = X.copy()[in_clst, :]
                 sub_mat = sub_mat.T[in_clst, :].T
                 sub_perm = my_method.fit_transform(sub_mat - sub_mat.min())
                 sub_cc = in_clst[sub_perm]
@@ -196,7 +361,7 @@ def ser_dupli_alt_clust3(A, C, seriation_solver='eta-trick', n_iter=100,
     if seriation_solver == 'mdso':
         my_solver = SpectralOrdering(norm_laplacian='random_walk')
     elif seriation_solver == 'eta-trick':
-        my_solver = SpectralEtaTrick(n_iter=10)
+        my_solver = SpectralEtaTrick(n_iter=20)
     else:  # use basic spectral Algorithm from Atkins et. al.
         my_solver = SpectralBaseline()
 
@@ -241,12 +406,16 @@ def ser_dupli_alt_clust3(A, C, seriation_solver='eta-trick', n_iter=100,
 
         # permu = permu[p2]
 
-        if (it % cluster_interval == 0) and (it > 0):
-            R_clus, p2 = clusterize_mat(S_tp, n_clusters, reord_mat=True)
+        if (it % cluster_interval == 0) and (it > 5550):
+            # R_clus, p2 = clusterize_mat(S_tp, n_clusters, reord_mat=True)
+            R_clus, p2 = simple_clusters(S_tp, n_clusters, reord_clusters=True)
             R_clus = R_clus[p2, :]
-            R_clus = R_clus.T[:, p2].T
+            R_clus = R_clus.T[p2, :].T
+            # R_clus = clusterize_mat(S_tp, n_clusters, reord_mat=False)
+            # p2 = np.arange(N)
         else:
             R_clus = S_tp
+            # R_clus = simple_clusters(S_tp, n_clusters)
             p2 = np.arange(N)
 
         permu = permu[p2]
@@ -257,12 +426,18 @@ def ser_dupli_alt_clust3(A, C, seriation_solver='eta-trick', n_iter=100,
         print(R_t.min())
 
         # R_clus = clusterize_mat(R_t, n_clusters, reord_mat=False)
+        R_clus = simple_clusters(R_t, n_clusters, reord_clusters=False)
 
         # R_t -= R_t.min()
 
         Z = Z[:, permu]
 
         perm_tot = perm_tot[permu]
+
+        r_clus_sym = is_symmetric(R_clus)
+        r_sym = is_symmetric(R_t)
+        s_sym = is_symmetric(S_tp)
+        print(r_clus_sym, r_sym, s_sym)
 
         if do_show:
             title = "iter {}".format(int(it))
@@ -653,8 +828,8 @@ if __name__ == '__main__':
     #               do_strong=False,
     #               include_main_diag=True, do_show=True, Z_true=Z_true)
 
-    (S_t, Z, R_clus, S_tp) = ser_dupli_alt_clust3(A, C, seriation_solver='eta-trick', n_iter=10,
-                        n_clusters=5, do_strong=False, include_main_diag=True,
+    (S_t, Z, R_clus, S_tp) = ser_dupli_alt_clust3(A, C, seriation_solver='eta-trick', n_iter=100,
+                        n_clusters=3, do_strong=False, include_main_diag=True,
                         do_show=True, Z_true=Z_true, cluster_interval=1)
 
     # (S_, Z_, R_) = ser_dupli_alt_clust2(A, C, seriation_solver='eta-trick', n_iter=20,
