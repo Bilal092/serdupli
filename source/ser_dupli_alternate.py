@@ -406,7 +406,7 @@ def ser_dupli_alt_clust3(A, C, seriation_solver='eta-trick', n_iter=100,
 
         # permu = permu[p2]
 
-        if (it % cluster_interval == 0) and (it > 5550):
+        if (it % cluster_interval == 0) and (it > 0):
             # R_clus, p2 = clusterize_mat(S_tp, n_clusters, reord_mat=True)
             R_clus, p2 = simple_clusters(S_tp, n_clusters, reord_clusters=True)
             R_clus = R_clus[p2, :]
@@ -426,7 +426,7 @@ def ser_dupli_alt_clust3(A, C, seriation_solver='eta-trick', n_iter=100,
         print(R_t.min())
 
         # R_clus = clusterize_mat(R_t, n_clusters, reord_mat=False)
-        R_clus = simple_clusters(R_t, n_clusters, reord_clusters=False)
+        # R_clus = simple_clusters(R_t, n_clusters, reord_clusters=False)
 
         # R_t -= R_t.min()
 
@@ -790,7 +790,7 @@ if __name__ == '__main__':
 
     from gen_data import gen_dupl_mat
 
-    n = 150
+    n = 250
     type_noise = 'gaussian'
     ampl_noise = 0.2
     type_similarity = 'LinearStrongDecrease'
@@ -802,7 +802,7 @@ if __name__ == '__main__':
     S = data_gen.sim_matrix
 
     # S = gen_chr_mat(n, 3, type_mat=S)
-    S = S + 1 * gen_chr_mat(n, 5)
+    S = S + 0.5 * gen_chr_mat(n, 8)
     #
     # n = 200
     # my_diag = np.zeros(n)
@@ -830,7 +830,7 @@ if __name__ == '__main__':
 
     (S_t, Z, R_clus, S_tp) = ser_dupli_alt_clust3(A, C, seriation_solver='eta-trick', n_iter=100,
                         n_clusters=3, do_strong=False, include_main_diag=True,
-                        do_show=True, Z_true=Z_true, cluster_interval=1)
+                        do_show=True, Z_true=Z_true, cluster_interval=2)
 
     # (S_, Z_, R_) = ser_dupli_alt_clust2(A, C, seriation_solver='eta-trick', n_iter=20,
     #                     n_clusters=1, do_strong=False, include_main_diag=True,
