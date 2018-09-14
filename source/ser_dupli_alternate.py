@@ -298,11 +298,21 @@ def clusterize_from_bps(X, bps, reord_clusters=True, reord_method=None):
         return(S_clus)
 
 
-def simple_clusters(X, K, reord_clusters=True, reord_method='eta-trick'):
+def simple_clusters(X, K, reord_clusters=True, reord_method='eta-trick',
+                    return_breakpoints=False):
     bps = linearized_cluster(X, K)
-
-    return(clusterize_from_bps(X, bps, reord_clusters=reord_clusters))
-
+    if reord_clusters:
+        X_clus, perm_ = clusterize_from_bps(X, bps, reord_clusters=reord_clusters)
+        if return_breakpoints:
+            return(X_clus, perm_, bps)
+        else:
+            return(X_clus, bps)
+    else:
+        X_clus = clusterize_from_bps(X, bps, reord_clusters=reord_clusters)
+        if return_breakpoints:
+            return(X_clus, bps)
+        else:
+            return(X_clus)
 
 
 
@@ -391,6 +401,7 @@ def ser_dupli_alt_clust3(A, C, seriation_solver='eta-trick', n_iter=100,
 
     perm_tot = np.arange(N)
 
+    bps_exists = False
     # Iterate
     for it in range(n_iter):
         # S_old
@@ -441,17 +452,44 @@ def ser_dupli_alt_clust3(A, C, seriation_solver='eta-trick', n_iter=100,
             # R_clus = clusterize_mat(R_t, n_clusters, reord_mat=False)
             reord_clusters = True
             if reord_clusters:
-                (R_clus, p2) = simple_clusters(R_t, n_clusters, reord_clusters=True)
+                (R_clus, p2, bps) = simple_clusters(R_t, n_clusters, reord_clusters=True,
+                                                    return_breakpoints=True)
             else:
-                R_clus = simple_clusters(R_t, n_clusters, reord_clusters=False)
+                R_clus, bps = simple_clusters(R_t, n_clusters, reord_clusters=False,
+                                        return_breakpoints=True)
                 p2 = np.arange(N)
             permu = permu[p2]
+            bps_exists = True
         else:
             R_clus = R_t
 
         # R_t -= R_t.min()
 
         Z = Z[:, permu]
+
+        # Flip sub-orderings in clusters if Z_true provided
+        mean_dist, _, is_inv = eval_assignments(Z, Z_true)
+        print("before rearranging clusters, mean dist : %1.2f" % (mean_dist))
+        if (Z_true is not None) and (bps_exists):
+            n_clusters = len(bps) - 1
+            for k_ in range(n_clusters):
+                Zbis = Z.copy()
+                in_clst = np.arange(bps[k_], bps[k_+1])
+                if not in_clst.size:
+                    print("empty cluster!")
+                    continue
+                mean_dist1, _, _ = eval_assignments(Zbis, Z_true)
+                Zbis[:, in_clst] = Zbis[:, in_clst[::-1]]
+                mean_dist2, _, _ = eval_assignments(Zbis, Z_true)
+                if mean_dist2 < mean_dist1:
+                    Z[:, in_clst] = Z[:, in_clst[::-1]]
+                    permu[in_clst] = permu[in_clst[::-1]]
+                # if is_inv:
+                #     Z[:, in_clst] = Z[:, in_clst][:, ::-1]
+                #     permu[in_clst] = permu[in_clst][::-1]
+
+            mean_dist, _, is_inv = eval_assignments(Z, Z_true)
+            print("after rearranging clusters, mean dist : %1.2f" % (mean_dist))
 
         perm_tot = perm_tot[permu]
 
@@ -469,7 +507,7 @@ def ser_dupli_alt_clust3(A, C, seriation_solver='eta-trick', n_iter=100,
                     Z = Z[:, ::-1]
             visualize_mat(R_clus, S_tp, R_t, Z, permu, title, Z_true=Z_true)
 
-        S_t = proj2dupli(R_t, Z, A, u_b=max_val, k_sparse=enforce_sparsity,
+        S_t = proj2dupli(R_clus, Z, A, u_b=max_val, k_sparse=enforce_sparsity,
                          include_main_diag=include_main_diag)
 
     return(S_t, Z, R_clus, S_tp)
@@ -823,8 +861,8 @@ if __name__ == '__main__':
     S = data_gen.sim_matrix
 
     # S = gen_chr_mat(n, 3, type_mat=S)
-    S = np.multiply(S, gen_chr_mat(n, 3))
-    # S = S + 0.5 * gen_chr_mat(n, 5)
+    # S = np.multiply(S, gen_chr_mat(n, 3))
+    S = S + 0.5 * gen_chr_mat(n, 5)
     #
     # n = 200
     # my_diag = np.zeros(n)
@@ -857,7 +895,7 @@ if __name__ == '__main__':
     np.random.seed(44)
     (S_t, Z, R_clus, S_tp) = ser_dupli_alt_clust3(A, C, seriation_solver='eta-trick', n_iter=100,
                         n_clusters=3, do_strong=False, include_main_diag=True,
-                        do_show=True, Z_true=Z_true, cluster_interval=3,
+                        do_show=True, Z_true=Z_true, cluster_interval=1,
                         enforce_sparsity=False)
 
     # (S_, Z_, R_) = ser_dupli_alt_clust2(A, C, seriation_solver='eta-trick', n_iter=20,

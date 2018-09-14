@@ -41,16 +41,16 @@ def eval_assignments(Z, Z_true, return_summary=True, return_inv=True):
 
     (n, N) = Z.shape
     (n_, N_) = Z_true.shape
-    if n > N:
-        Z = Z.T
-        nn = n
-        n = N
-        N = nn
-    if n_ > N_:
-        Z_true = Z_true.T
-        nn_ = n_
-        n_ = N_
-        N_ = nn_
+    # if n > N:
+    #     Z = Z.T
+    #     nn = n
+    #     n = N
+    #     N = nn
+    # if n_ > N_:
+    #     Z_true = Z_true.T
+    #     nn_ = n_
+    #     n_ = N_
+    #     N_ = nn_
     if not(n == n_ and N == N_):
         raise ValueError("Z and Z_true must have the same shape"
                          " ({} vs {})".format(Z.shape, Z_true.shape))
