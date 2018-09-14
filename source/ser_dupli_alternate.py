@@ -9,10 +9,11 @@ from scipy.sparse import find, coo_matrix, issparse
 import matplotlib.pyplot as plt
 from sklearn.cluster import SpectralClustering
 from mdso import SpectralOrdering, SpectralBaseline
+from mdso import SpectralEtaTrick
 
 from proj2r import proj2Rmat
 from proj2dupli import proj2dupli
-from spectral_eta_trick_ import SpectralEtaTrick
+# from spectral_eta_trick_ import SpectralEtaTrick
 
 from eval_dupli import eval_assignments
 
@@ -82,8 +83,10 @@ def visualize_mat(S_t, S_tp, R_t, Z, perm, title, Z_true=None, fig_nb=1):
     # # plt.title(str(len(ORDER)))
     # plt.draw()
     # plt.pause(0.01)
-    plt.close()
-    fig, axes = plt.subplots(2, 2)
+    # plt.close()
+    fig = plt.figure(2)
+    plt.gcf().clear()
+    axes = fig.subplots(2, 2)
     cax = axes[0, 0].matshow(S_t)
     fig.colorbar(cax, ax=axes[0, 0])
     cax2 = axes[0, 1].matshow(R_t)
@@ -102,6 +105,7 @@ def visualize_mat(S_t, S_tp, R_t, Z, perm, title, Z_true=None, fig_nb=1):
     # axes[1, 1].scatter(perm[:, 0], perm[:, 1], c=np.arange(len(perm[:, 0])))
     # axes[2].matshow(S2)
     plt.title(title)
+    plt.tight_layout
     plt.draw()
     plt.pause(0.01)
 
@@ -273,9 +277,16 @@ def clusterize_from_bps(X, bps, reord_clusters=True, reord_method=None):
         s_clus[sub_idx] = x_flat[sub_idx]  # Projection on block matrices
 
         if reord_clusters:
-            sub_mat = X.copy()[in_clst, :]
-            sub_mat = sub_mat.T[in_clst, :].T
-            sub_perm = my_method.fit_transform(sub_mat - sub_mat.min())
+            if len(in_clst) < 3:
+                sub_perm = np.arange(len(in_clst))
+            else:
+                sub_mat = X.copy()[in_clst, :]
+                sub_mat = sub_mat.T[in_clst, :].T
+                min_sub = sub_mat.min()
+                if min_sub < 0:
+                    sub_perm = my_method.fit_transform(sub_mat - sub_mat.min())
+                else:
+                    sub_perm = my_method.fit_transform(sub_mat)
             sub_cc = in_clst[sub_perm]
             permu = np.append(permu, sub_cc)
 
@@ -351,7 +362,8 @@ def clusterize_mat(X, n_clusters, reord_mat=False, reord_method='eta-trick'):
 def ser_dupli_alt_clust3(A, C, seriation_solver='eta-trick', n_iter=100,
                   n_clusters=1, do_strong=False,
                   include_main_diag=True, do_show=True, Z_true=None,
-                  cluster_interval=10):
+                  cluster_interval=10,
+                  enforce_sparsity=False):
 
     (n_, n1) = A.shape
     n2 = len(C)
@@ -406,7 +418,7 @@ def ser_dupli_alt_clust3(A, C, seriation_solver='eta-trick', n_iter=100,
 
         # permu = permu[p2]
 
-        if (it % cluster_interval == 0) and (it > 0):
+        if (it % cluster_interval == 0) and (it > 10000):
             # R_clus, p2 = clusterize_mat(S_tp, n_clusters, reord_mat=True)
             R_clus, p2 = simple_clusters(S_tp, n_clusters, reord_clusters=True)
             R_clus = R_clus[p2, :]
@@ -425,8 +437,17 @@ def ser_dupli_alt_clust3(A, C, seriation_solver='eta-trick', n_iter=100,
                         u_b=max_val)
         print(R_t.min())
 
-        # R_clus = clusterize_mat(R_t, n_clusters, reord_mat=False)
-        # R_clus = simple_clusters(R_t, n_clusters, reord_clusters=False)
+        if (it % cluster_interval == 0) and (it > 0):
+            # R_clus = clusterize_mat(R_t, n_clusters, reord_mat=False)
+            reord_clusters = True
+            if reord_clusters:
+                (R_clus, p2) = simple_clusters(R_t, n_clusters, reord_clusters=True)
+            else:
+                R_clus = simple_clusters(R_t, n_clusters, reord_clusters=False)
+                p2 = np.arange(N)
+            permu = permu[p2]
+        else:
+            R_clus = R_t
 
         # R_t -= R_t.min()
 
@@ -434,10 +455,10 @@ def ser_dupli_alt_clust3(A, C, seriation_solver='eta-trick', n_iter=100,
 
         perm_tot = perm_tot[permu]
 
-        r_clus_sym = is_symmetric(R_clus)
-        r_sym = is_symmetric(R_t)
-        s_sym = is_symmetric(S_tp)
-        print(r_clus_sym, r_sym, s_sym)
+        # r_clus_sym = is_symmetric(R_clus)
+        # r_sym = is_symmetric(R_t)
+        # s_sym = is_symmetric(S_tp)
+        # print(r_clus_sym, r_sym, s_sym)
 
         if do_show:
             title = "iter {}".format(int(it))
@@ -448,7 +469,7 @@ def ser_dupli_alt_clust3(A, C, seriation_solver='eta-trick', n_iter=100,
                     Z = Z[:, ::-1]
             visualize_mat(R_clus, S_tp, R_t, Z, permu, title, Z_true=Z_true)
 
-        S_t = proj2dupli(R_t, Z, A, u_b=max_val, k_sparse=None,
+        S_t = proj2dupli(R_t, Z, A, u_b=max_val, k_sparse=enforce_sparsity,
                          include_main_diag=include_main_diag)
 
     return(S_t, Z, R_clus, S_tp)
@@ -790,7 +811,7 @@ if __name__ == '__main__':
 
     from gen_data import gen_dupl_mat
 
-    n = 250
+    n = 200
     type_noise = 'gaussian'
     ampl_noise = 0.2
     type_similarity = 'LinearStrongDecrease'
@@ -802,16 +823,21 @@ if __name__ == '__main__':
     S = data_gen.sim_matrix
 
     # S = gen_chr_mat(n, 3, type_mat=S)
-    S = S + 0.5 * gen_chr_mat(n, 8)
+    S = np.multiply(S, gen_chr_mat(n, 3))
+    # S = S + 0.5 * gen_chr_mat(n, 5)
     #
     # n = 200
     # my_diag = np.zeros(n)
     # my_diag[:int(n//5)] = 1
     # S = toeplitz(my_diag)
-    n_by_N = 0.65
+    n_by_N = 0.75
     prop_dupli = 1
     rand_seed = 1
     np.random.seed(rand_seed)
+
+    # rp = np.random.permutation(n)
+    # S = S[rp, :]
+    # S = S.T[rp, :].T
 
     (Z, A, C) = gen_dupl_mat(S, n_by_N, prop_dupli=prop_dupli,
                              rand_seed=rand_seed)
@@ -828,9 +854,11 @@ if __name__ == '__main__':
     #               do_strong=False,
     #               include_main_diag=True, do_show=True, Z_true=Z_true)
 
+    np.random.seed(44)
     (S_t, Z, R_clus, S_tp) = ser_dupli_alt_clust3(A, C, seriation_solver='eta-trick', n_iter=100,
                         n_clusters=3, do_strong=False, include_main_diag=True,
-                        do_show=True, Z_true=Z_true, cluster_interval=2)
+                        do_show=True, Z_true=Z_true, cluster_interval=3,
+                        enforce_sparsity=False)
 
     # (S_, Z_, R_) = ser_dupli_alt_clust2(A, C, seriation_solver='eta-trick', n_iter=20,
     #                     n_clusters=1, do_strong=False, include_main_diag=True,
